@@ -1,0 +1,37 @@
+name: QuartetDesk
+options:
+  bundleIdPrefix: tv.affirmi
+  deploymentTarget:
+    macOS: "14.0"
+
+packages:
+  QuartetDeskKit:
+    path: .
+
+targets:
+  QuartetDesk:
+    type: application
+    platform: macOS
+    sources:
+      - App
+    dependencies:
+      - package: QuartetDeskKit
+        product: QuartetUI
+    entitlements:
+      path: App/QuartetDesk.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
+        com.apple.security.files.user-selected.read-write: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: tv.affirmi.quartetdesk
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSHumanReadableCopyright: ""
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_HARDENED_RUNTIME: NO

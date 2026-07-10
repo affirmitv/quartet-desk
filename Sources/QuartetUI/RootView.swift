@@ -1,0 +1,158 @@
+import SwiftUI
+import AppKit
+import os
+import QuartetEngine
+import QuartetExport
+
+/// Main window: history sidebar + (live run | selected record) detail.
+public struct QuartetRootView: View {
+    private static let logger = Logger(subsystem: "tv.affirmi.quartetdesk", category: "root-ui")
+
+    @Bindable var model: AppModel
+    @State private var exportError: String?
+
+    init(model: AppModel) {
+        self.model = model
+    }
+
+    public var body: some View {
+        NavigationSplitView {
+            HistorySidebar(model: model)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 220)
+        } detail: {
+            detail
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                exportMenu
+            }
+        }
+        .alert("Export failed", isPresented: Binding(
+            get: { exportError != nil },
+            set: { if !$0 { exportError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(exportError ?? "")
+        }
+        .navigationTitle("Quartet Desk")
+    }
+
+    @ViewBuilder
+    private var detail: some View {
+        if let record = model.selectedRecord {
+            RecordDetailView(record: record, priceTable: model.priceTable)
+        } else {
+            VStack(spacing: 0) {
+                if !model.startupWarnings.isEmpty {
+                    WarningsBanner(warnings: model.startupWarnings) {
+                        model.startupWarnings = []
+                    }
+                }
+                ComposerView(model: model)
+                    .padding()
+                Divider()
+                LiveResultView(model: model)
+                if let runError = model.runError {
+                    Divider()
+                    Label(runError, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    // MARK: - Export
+
+    private var exportMenu: some View {
+        Menu {
+            Button("Export Answer as Markdown…") {
+                exportMarkdown(answerOnly: true)
+            }
+            .disabled(exportableRecord == nil)
+
+            Button("Export Full Run as Markdown…") {
+                exportMarkdown(answerOnly: false)
+            }
+            .disabled(exportableRecord == nil)
+
+            Divider()
+
+            // TODO(v1.x): PDF export via NSPrintOperation on the rendered answer view.
+            // Stubbed disabled per spec — do not enable until it actually prints.
+            Button("Export as PDF (coming soon)") {}
+                .disabled(true)
+        } label: {
+            Label("Export", systemImage: "square.and.arrow.up")
+        }
+        .help(exportableRecord == nil ? "Run the quartet (or select a past run) to export." : "Export this run")
+    }
+
+    private var exportableRecord: RunRecord? {
+        model.selectedRecord ?? model.lastRecord
+    }
+
+    private func exportMarkdown(answerOnly: Bool) {
+        guard let record = exportableRecord else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.init(filenameExtension: "md") ?? .plainText]
+        panel.nameFieldStringValue = answerOnly ? "quartet-answer.md" : "quartet-run.md"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        let markdown = answerOnly
+            ? MarkdownExporter.answerMarkdown(record)
+            : MarkdownExporter.fullRunMarkdown(record)
+        do {
+            try Data(markdown.utf8).write(to: url, options: .atomic)
+        } catch {
+            Self.logger.error("Markdown export failed: \(String(describing: error), privacy: .public)")
+            exportError = error.localizedDescription
+        }
+    }
+}
+
+private struct WarningsBanner: View {
+    let warnings: [String]
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Array(warnings.enumerated()), id: \.offset) { _, warning in
+                    Text(warning).font(.callout)
+                }
+            }
+            Spacer()
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(8)
+        .background(Color.orange.opacity(0.12))
+    }
+}
+
+/// Public entry point used by the app target: owns the AppModel and wires
+/// the main window + settings scenes together.
+@MainActor
+public struct QuartetDeskRoot {
+    let model: AppModel
+
+    public init() {
+        self.model = AppModel()
+    }
+
+    public func rootView() -> some View {
+        QuartetRootView(model: model)
+    }
+
+    public func settingsView() -> some View {
+        QuartetSettingsView(model: model)
+    }
+}
