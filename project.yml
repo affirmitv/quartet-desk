@@ -35,3 +35,35 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
         ENABLE_HARDENED_RUNTIME: NO
+
+  # Live UI smoke test (spends real tokens): drives one full quartet run through
+  # the real UI and attaches screenshots. Run:
+  #   xcodebuild test -project QuartetDesk.xcodeproj -scheme QuartetDesk
+  QuartetDeskUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - UITests
+    dependencies:
+      - target: QuartetDesk
+    settings:
+      base:
+        TEST_TARGET_NAME: QuartetDesk
+        PRODUCT_BUNDLE_IDENTIFIER: tv.affirmi.quartetdesk.uitests
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+
+schemes:
+  QuartetDesk:
+    build:
+      targets:
+        QuartetDesk: all
+        QuartetDeskUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - QuartetDeskUITests

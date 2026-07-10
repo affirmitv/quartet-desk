@@ -10,6 +10,7 @@ public struct QuartetRootView: View {
 
     @Bindable var model: AppModel
     @State private var exportError: String?
+    @Environment(\.openSettings) private var openSettings
 
     init(model: AppModel) {
         self.model = model
@@ -35,6 +36,11 @@ public struct QuartetRootView: View {
             Text(exportError ?? "")
         }
         .navigationTitle("Quartet Desk")
+        .onReceive(DistributedNotificationCenter.default().publisher(for: SmokeCapture.openSettingsNotification)) { _ in
+            // Smoke harness only — inert unless launched with --smoke-shots.
+            guard SmokeCapture.isEnabled else { return }
+            openSettings()
+        }
     }
 
     @ViewBuilder
@@ -146,6 +152,7 @@ public struct QuartetDeskRoot {
 
     public init() {
         self.model = AppModel()
+        SmokeCapture.activateIfRequested(model: model)
     }
 
     public func rootView() -> some View {

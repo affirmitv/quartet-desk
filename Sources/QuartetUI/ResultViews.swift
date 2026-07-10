@@ -9,14 +9,14 @@ enum ResultTab: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-/// The three result tabs for the LIVE run.
+/// The three result tabs for the LIVE run. Tab selection lives on AppModel so
+/// it survives view identity changes (and is drivable by the smoke harness).
 struct LiveResultView: View {
     @Bindable var model: AppModel
-    @State private var tab: ResultTab = .answer
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $tab) {
+            Picker("", selection: $model.resultTab) {
                 ForEach(ResultTab.allCases) { tab in
                     Text(tab.rawValue).tag(tab)
                 }
@@ -28,7 +28,7 @@ struct LiveResultView: View {
 
             Divider()
 
-            switch tab {
+            switch model.resultTab {
             case .answer:
                 AnswerPane(status: model.synthesisStatus,
                            liveText: model.liveAnswerText,

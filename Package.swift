@@ -26,6 +26,10 @@ let package = Package(
         // @main shell over this module.
         .target(name: "QuartetUI", dependencies: ["QuartetEngine", "QuartetProviders", "QuartetExport"]),
 
+        // Live wire smoke test (spends a few real tokens): `swift run LiveSmoke`.
+        // Streams one tiny completion per seat via the real clients + Keychain keys.
+        .executableTarget(name: "LiveSmoke", dependencies: ["QuartetEngine", "QuartetProviders"]),
+
         .testTarget(name: "QuartetEngineTests", dependencies: ["QuartetEngine"]),
     ]
 )

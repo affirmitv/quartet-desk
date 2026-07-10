@@ -49,6 +49,10 @@ final class AppModel {
     var deliberate: Bool = false
     var attachmentError: String?
 
+    // MARK: Result tab (lifted out of the view so it survives view identity
+    // changes and is drivable by the smoke harness)
+    var resultTab: ResultTab = .answer
+
     // MARK: Run state
     private(set) var isRunning = false
     private(set) var seatStates: [SeatLiveState] = []
