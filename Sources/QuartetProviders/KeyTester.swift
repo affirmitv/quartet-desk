@@ -37,9 +37,11 @@ public struct KeyTester: Sendable {
             throw ProviderError.invalidResponse
         }
         guard (200..<300).contains(http.statusCode) else {
-            let body = String(decoding: data.prefix(400), as: UTF8.self)
+            let raw = String(decoding: data.prefix(StreamingHTTP.maxCapturedBodyBytes), as: UTF8.self)
+            let message = SecretRedactor.redact(
+                StreamingHTTP.parseErrorEnvelope(raw) ?? String(raw.prefix(ProviderError.maxDisplayedBodyChars)))
             Self.logger.error("Key test failed for \(provider.rawValue, privacy: .public): HTTP \(http.statusCode)")
-            throw ProviderError.http(status: http.statusCode, body: body)
+            throw ProviderError.http(status: http.statusCode, body: message)
         }
 
         switch provider {

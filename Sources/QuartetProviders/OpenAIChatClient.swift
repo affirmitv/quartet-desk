@@ -43,38 +43,10 @@ public struct OpenAIChatClient: ProviderStreaming {
     }
 
     public func stream(request: SeatRequest, apiKey: String) -> AsyncThrowingStream<StreamChunk, Error> {
-        let (stream, continuation) = AsyncThrowingStream<StreamChunk, Error>.makeStream()
         let flavor = self.flavor
-        let task = Task {
-            do {
-                let urlRequest = try Self.makeURLRequest(request: request, apiKey: apiKey, flavor: flavor)
-                let (bytes, response) = try await URLSession.shared.bytes(for: urlRequest)
-                try await StreamingHTTP.validate(bytes: bytes, response: response, logger: Self.logger)
-
-                var splitter = SSELineSplitter()
-                var parser = SSEParser()
-                var decoder = OpenAIChatSSEDecoder()
-
-                for try await byte in bytes {
-                    guard let line = splitter.feed(byte) else { continue }
-                    guard let event = parser.feed(line: line) else { continue }
-                    for chunk in try decoder.decode(event) {
-                        continuation.yield(chunk)
-                    }
-                    if decoder.sawTerminal { break }
-                }
-
-                guard decoder.sawTerminal else {
-                    throw ProviderError.truncatedStream(provider: flavor.displayName)
-                }
-                continuation.finish()
-            } catch {
-                Self.logger.error("\(flavor.displayName, privacy: .public) stream failed: \(String(describing: error), privacy: .public)")
-                continuation.finish(throwing: error)
-            }
-        }
-        continuation.onTermination = { _ in task.cancel() }
-        return stream
+        return SSEStreamTransport(providerName: flavor.displayName, logger: Self.logger)
+            .stream(makeRequest: { try Self.makeURLRequest(request: request, apiKey: apiKey, flavor: flavor) },
+                    makeDecoder: { OpenAIChatSSEDecoder() })
     }
 
     // MARK: - Request building

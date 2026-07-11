@@ -11,37 +11,9 @@ public struct AnthropicClient: ProviderStreaming {
     public init() {}
 
     public func stream(request: SeatRequest, apiKey: String) -> AsyncThrowingStream<StreamChunk, Error> {
-        let (stream, continuation) = AsyncThrowingStream<StreamChunk, Error>.makeStream()
-        let task = Task {
-            do {
-                let urlRequest = try Self.makeURLRequest(request: request, apiKey: apiKey)
-                let (bytes, response) = try await URLSession.shared.bytes(for: urlRequest)
-                try await StreamingHTTP.validate(bytes: bytes, response: response, logger: Self.logger)
-
-                var splitter = SSELineSplitter()
-                var parser = SSEParser()
-                var decoder = AnthropicSSEDecoder()
-
-                for try await byte in bytes {
-                    guard let line = splitter.feed(byte) else { continue }
-                    guard let event = parser.feed(line: line) else { continue }
-                    for chunk in try decoder.decode(event) {
-                        continuation.yield(chunk)
-                    }
-                    if decoder.sawTerminal { break }
-                }
-
-                guard decoder.sawTerminal else {
-                    throw ProviderError.truncatedStream(provider: "Anthropic")
-                }
-                continuation.finish()
-            } catch {
-                Self.logger.error("Anthropic stream failed: \(String(describing: error), privacy: .public)")
-                continuation.finish(throwing: error)
-            }
-        }
-        continuation.onTermination = { _ in task.cancel() }
-        return stream
+        SSEStreamTransport(providerName: "Anthropic", logger: Self.logger)
+            .stream(makeRequest: { try Self.makeURLRequest(request: request, apiKey: apiKey) },
+                    makeDecoder: { AnthropicSSEDecoder() })
     }
 
     // MARK: - Request building
@@ -52,6 +24,16 @@ public struct AnthropicClient: ProviderStreaming {
         var stream: Bool
         var system: String?
         var messages: [Message]
+        /// Adaptive thinking is the recommended mode for current Claude models
+        /// (with thinking off, Opus 4.8 may write verbose reasoning into the
+        /// visible answer). Thinking tokens bill as output tokens, so the
+        /// existing usage/cost accounting is unchanged; the decoder already
+        /// ignores thinking_delta frames.
+        var thinking: Thinking? = Thinking(type: "adaptive")
+
+        struct Thinking: Encodable {
+            var type: String
+        }
 
         struct Message: Encodable {
             var role: String
@@ -121,26 +103,4 @@ struct DynamicKey: CodingKey {
     init(_ string: String) { self.stringValue = string }
     init?(stringValue: String) { self.stringValue = stringValue }
     init?(intValue: Int) { nil }
-}
-
-/// Shared HTTP status validation for streaming responses.
-enum StreamingHTTP {
-    /// Throws ProviderError.http with (up to 16KB of) the error body on non-2xx.
-    static func validate(bytes: URLSession.AsyncBytes, response: URLResponse, logger: Logger) async throws {
-        guard let http = response as? HTTPURLResponse else {
-            throw ProviderError.invalidResponse
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            var body = Data()
-            do {
-                for try await byte in bytes {
-                    body.append(byte)
-                    if body.count >= 16_384 { break }
-                }
-            } catch {
-                logger.error("Failed reading error body for HTTP \(http.statusCode): \(String(describing: error), privacy: .public)")
-            }
-            throw ProviderError.http(status: http.statusCode, body: String(decoding: body, as: UTF8.self))
-        }
-    }
 }
