@@ -93,41 +93,79 @@ struct ComposerView: View {
             .help(over ? "Over the soft cap — the run will still go through, but consider trimming." : "Character count (soft cap)")
     }
 
+    /// One user gesture = ONE task that processes every dropped item
+    /// sequentially. This keeps attachments in the order the user provided
+    /// them (parallel per-file tasks complete in downscale-speed order) and
+    /// keeps error accumulation deterministic. The error surface is cleared
+    /// once per gesture — never per file — so no failure is silently clobbered.
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
-        var handled = false
-        for provider in providers {
-            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                handled = true
-                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, error in
-                    if let error {
-                        Task { @MainActor in model.attachmentError = "Drop failed: \(error.localizedDescription)" }
-                        return
-                    }
-                    guard let data = item as? Data,
-                          let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
-                    Task { @MainActor in
-                        do {
-                            let fileData = try Data(contentsOf: url)
-                            await model.addAttachment(imageData: fileData)
-                        } catch {
-                            model.attachmentError = "Could not read \(url.lastPathComponent): \(error.localizedDescription)"
-                        }
-                    }
+        let fileProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+        let imageProviders = providers.filter {
+            !$0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+                && $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+        }
+        guard !fileProviders.isEmpty || !imageProviders.isEmpty else { return false }
+        model.clearAttachmentError()
+        Task { @MainActor in
+            for provider in fileProviders {
+                do {
+                    let url = try await Self.loadFileURL(from: provider)
+                    await model.addAttachment(contentsOf: url)
+                } catch {
+                    model.appendAttachmentError("Drop failed: \(error.localizedDescription)")
                 }
-            } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
-                handled = true
-                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, error in
-                    Task { @MainActor in
-                        if let data {
-                            await model.addAttachment(imageData: data)
-                        } else {
-                            model.attachmentError = "Image drop failed: \(error?.localizedDescription ?? "no data")"
-                        }
-                    }
+            }
+            for provider in imageProviders {
+                do {
+                    let data = try await Self.loadImageData(from: provider)
+                    await model.addAttachment(imageData: data)
+                } catch {
+                    model.appendAttachmentError("Image drop failed: \(error.localizedDescription)")
                 }
             }
         }
-        return handled
+        return true
+    }
+
+    private enum DropLoadError: LocalizedError {
+        case notAFileURL
+        case noData
+
+        var errorDescription: String? {
+            switch self {
+            case .notAFileURL: return "The dropped item is not a file URL."
+            case .noData: return "The dropped item carried no image data."
+            }
+        }
+    }
+
+    private static func loadFileURL(from provider: NSItemProvider) async throws -> URL {
+        try await withCheckedThrowingContinuation { continuation in
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                guard let data = item as? Data,
+                      let url = URL(dataRepresentation: data, relativeTo: nil) else {
+                    continuation.resume(throwing: DropLoadError.notAFileURL)
+                    return
+                }
+                continuation.resume(returning: url)
+            }
+        }
+    }
+
+    private static func loadImageData(from provider: NSItemProvider) async throws -> Data {
+        try await withCheckedThrowingContinuation { continuation in
+            provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, error in
+                if let data {
+                    continuation.resume(returning: data)
+                } else {
+                    continuation.resume(throwing: error ?? DropLoadError.noData)
+                }
+            }
+        }
     }
 
     private func pickImageFile() {
@@ -135,14 +173,12 @@ struct ComposerView: View {
         panel.allowedContentTypes = [.image]
         panel.allowsMultipleSelection = true
         guard panel.runModal() == .OK else { return }
-        for url in panel.urls {
-            Task { @MainActor in
-                do {
-                    let data = try Data(contentsOf: url)
-                    await model.addAttachment(imageData: data)
-                } catch {
-                    model.attachmentError = "Could not read \(url.lastPathComponent): \(error.localizedDescription)"
-                }
+        let urls = panel.urls
+        model.clearAttachmentError()
+        // One task for the whole selection: deterministic order, no error clobbering.
+        Task { @MainActor in
+            for url in urls {
+                await model.addAttachment(contentsOf: url)
             }
         }
     }

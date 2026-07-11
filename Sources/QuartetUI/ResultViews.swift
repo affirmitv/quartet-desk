@@ -165,6 +165,9 @@ struct SeatCard: View {
                     Label(message, systemImage: "xmark.octagon.fill")
                         .foregroundStyle(.red)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                } else if state.status == .cancelled && state.text.isEmpty {
+                    Text("Stopped before this seat answered.")
+                        .foregroundStyle(.secondary)
                 } else if state.text.isEmpty {
                     Text("Waiting…")
                         .foregroundStyle(.secondary)
@@ -194,6 +197,10 @@ struct SeatCard: View {
             Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
         case .failed:
             Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+        case .cancelled:
+            Image(systemName: "stop.circle.fill")
+                .foregroundStyle(.secondary)
+                .help("Run was stopped before this seat finished")
         }
     }
 

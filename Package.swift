@@ -31,5 +31,6 @@ let package = Package(
         .executableTarget(name: "LiveSmoke", dependencies: ["QuartetEngine", "QuartetProviders"]),
 
         .testTarget(name: "QuartetEngineTests", dependencies: ["QuartetEngine"]),
+        .testTarget(name: "QuartetUITests", dependencies: ["QuartetUI", "QuartetEngine", "QuartetProviders"]),
     ]
 )

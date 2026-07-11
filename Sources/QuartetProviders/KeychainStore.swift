@@ -46,6 +46,13 @@ public struct KeychainStore: Sendable {
         }
     }
 
+    /// Idempotent under concurrent writers. Individual SecItem* calls are
+    /// thread-safe per Apple, but update→add is a check-then-act: two writers
+    /// (e.g. the app plus a second instance / smoke harness) can both see
+    /// errSecItemNotFound and race SecItemAdd. The loser gets
+    /// errSecDuplicateItem — which means a valid item now exists, so we retry
+    /// the update once instead of surfacing a bogus "save failed".
+    /// Semantics across concurrent setKey calls are last-writer-wins.
     public func setKey(_ key: String, for provider: ProviderKind) throws {
         let data = Data(key.utf8)
         let query = baseQuery(for: provider)
@@ -59,7 +66,18 @@ public struct KeychainStore: Sendable {
             var add = query
             add[kSecValueData as String] = data
             let addStatus = SecItemAdd(add as CFDictionary, nil)
-            guard addStatus == errSecSuccess else {
+            switch addStatus {
+            case errSecSuccess:
+                return
+            case errSecDuplicateItem:
+                // Lost the add race to a concurrent writer — the item exists now.
+                Self.logger.notice("Keychain add for \(provider.rawValue, privacy: .public) hit errSecDuplicateItem (concurrent writer); retrying update")
+                let retryStatus = SecItemUpdate(query as CFDictionary, update as CFDictionary)
+                guard retryStatus == errSecSuccess else {
+                    Self.logger.error("Keychain update retry failed for \(provider.rawValue, privacy: .public): OSStatus \(retryStatus)")
+                    throw KeychainError.osStatus(retryStatus)
+                }
+            default:
                 Self.logger.error("Keychain add failed for \(provider.rawValue, privacy: .public): OSStatus \(addStatus)")
                 throw KeychainError.osStatus(addStatus)
             }
