@@ -59,110 +59,23 @@ private struct PrivacySettings: View {
 // MARK: - API Keys
 
 private struct APIKeysSettings: View {
+    /// One shared entry model per provider — the SAME component the onboarding
+    /// wizard uses (ProviderKeyEntryRow), so there is exactly one save/test path.
+    @State private var rows = ProviderKind.allCases.map { ProviderKeyEntryModel(provider: $0) }
+
     var body: some View {
         Form {
-            ForEach(ProviderKind.allCases) { provider in
-                ProviderKeyRow(provider: provider)
+            ForEach(rows) { row in
+                Section(row.provider.displayName) {
+                    ProviderKeyEntryRow(model: row, chrome: .form)
+                }
             }
             Text("Keys are stored in the macOS Keychain (service \(KeychainStore.service)), never on disk.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(QDTheme.text45)
         }
         .formStyle(.grouped)
         .padding()
-    }
-}
-
-private struct ProviderKeyRow: View {
-    private static let logger = Logger(subsystem: "tv.affirmi.quartetdesk", category: "settings-ui")
-
-    let provider: ProviderKind
-
-    @State private var key: String = ""
-    @State private var status: Status = .unknown
-    @State private var testing = false
-
-    enum Status: Equatable {
-        case unknown
-        case saved
-        case pass(String)
-        case fail(String)
-    }
-
-    var body: some View {
-        Section(provider.displayName) {
-            HStack {
-                SecureField("API key", text: $key)
-                    .textFieldStyle(.roundedBorder)
-                Button("Save") { save() }
-                    .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty)
-                Button {
-                    test()
-                } label: {
-                    if testing {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Text("Test")
-                    }
-                }
-                .disabled(testing || key.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-            statusLine
-        }
-        .onAppear { loadExisting() }
-    }
-
-    @ViewBuilder
-    private var statusLine: some View {
-        switch status {
-        case .unknown:
-            Text("No key stored.").font(.caption).foregroundStyle(.secondary)
-        case .saved:
-            Label("Key stored in Keychain (untested this session).", systemImage: "checkmark")
-                .font(.caption).foregroundStyle(.secondary)
-        case .pass(let message):
-            Label(message, systemImage: "checkmark.seal.fill")
-                .font(.caption).foregroundStyle(.green)
-        case .fail(let message):
-            Label(message, systemImage: "xmark.octagon.fill")
-                .font(.caption).foregroundStyle(.red)
-        }
-    }
-
-    private func loadExisting() {
-        do {
-            if let existing = try KeychainStore().key(for: provider), !existing.isEmpty {
-                key = existing
-                status = .saved
-            }
-        } catch {
-            Self.logger.error("Keychain read in settings failed: \(String(describing: error), privacy: .public)")
-            status = .fail("Keychain read failed: \(error.localizedDescription)")
-        }
-    }
-
-    private func save() {
-        do {
-            try KeychainStore().setKey(key.trimmingCharacters(in: .whitespacesAndNewlines), for: provider)
-            status = .saved
-        } catch {
-            Self.logger.error("Keychain save failed: \(String(describing: error), privacy: .public)")
-            status = .fail("Keychain save failed: \(error.localizedDescription)")
-        }
-    }
-
-    private func test() {
-        testing = true
-        let candidate = key
-        Task {
-            defer { testing = false }
-            do {
-                let summary = try await KeyTester().test(provider: provider, apiKey: candidate)
-                status = .pass(summary)
-            } catch {
-                status = .fail(userFacingMessage(for: error))
-            }
-        }
     }
 }
 
@@ -206,7 +119,7 @@ private struct SeatsSettings: View {
             }
             if let validationError {
                 Label(validationError, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red)
+                    .foregroundStyle(QDTheme.bad)
             }
             HStack {
                 Button("Restore Defaults") {
@@ -278,7 +191,7 @@ private struct PricesSettings: View {
                 if let saveError {
                     Label(saveError, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(QDTheme.bad)
                 }
             }
             Section("Add a model price") {
@@ -296,7 +209,7 @@ private struct PricesSettings: View {
                 if let addError {
                     Label(addError, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(QDTheme.bad)
                 }
                 Text("Seat models without a price show \u{201C}price not set\u{201D} instead of a wrong number. Check each provider's current pricing page before entering values.")
                     .font(.caption)
@@ -351,7 +264,7 @@ private struct PriceField: View {
             TextField("", text: $text)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 70)
-                .foregroundStyle(invalid ? .red : .primary)
+                .foregroundStyle(invalid ? QDTheme.bad : Color.primary)
                 .focused($focused)
                 .onSubmit { commitIfValid() }
                 .onChange(of: focused) { _, isFocused in
