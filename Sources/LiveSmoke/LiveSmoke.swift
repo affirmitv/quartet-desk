@@ -22,15 +22,16 @@ struct LiveSmoke {
         var error: String?
     }
 
+    /// The expected reply token — asserted with `contains` (models add
+    /// whitespace/punctuation around it).
+    static let expectedToken = "quartet-live-ok"
+
     static func main() async {
-        let seats = [
-            Seat(name: "Seat 1 — Anchor", provider: .anthropic, modelID: "claude-opus-4-8", isAnchor: true),
-            Seat(name: "Seat 2", provider: .openrouter, modelID: "openai/gpt-5.6-sol-pro"),
-            Seat(name: "Seat 3", provider: .openrouter, modelID: "google/gemini-3.1-pro-preview"),
-            Seat(name: "Seat 4", provider: .openrouter, modelID: "qwen/qwen3.7-max"),
-        ]
+        // ALWAYS the real default quartet — a hand-copied list here silently
+        // validates the wrong lineup the next time the defaults change.
+        let seats = SeatConfiguration.defaultSeats()
         let resolver = KeychainProviderResolver()
-        let prompt = "Reply with exactly: quartet-live-ok"
+        let prompt = "Reply with exactly: \(expectedToken)"
         var results: [SeatResult] = []
 
         for seat in seats {
@@ -59,11 +60,16 @@ struct LiveSmoke {
                         result.stopReason = reason
                     }
                 }
-                if result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let trimmed = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty {
                     result.error = "empty answer (stop=\(result.stopReason ?? "nil"))"
+                } else if !trimmed.contains(Self.expectedToken) {
+                    // The prompt demands the token — actually assert it, so a seat
+                    // replying garbage can't PASS.
+                    result.error = "reply did not contain \"\(Self.expectedToken)\": \(trimmed.prefix(120))"
                 }
             } catch {
-                result.error = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+                result.error = userFacingMessage(for: error)
             }
             results.append(result)
         }

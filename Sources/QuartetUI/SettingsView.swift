@@ -128,7 +128,7 @@ private struct ProviderKeyRow: View {
                 let summary = try await KeyTester().test(provider: provider, apiKey: candidate)
                 status = .pass(summary)
             } catch {
-                status = .fail((error as? LocalizedError)?.errorDescription ?? String(describing: error))
+                status = .fail(userFacingMessage(for: error))
             }
         }
     }
@@ -193,10 +193,11 @@ private struct SeatsSettings: View {
     private func saveIfValid() {
         do {
             try SeatConfiguration.validate(model.seats)
-            validationError = nil
-            model.persistSettings()
+            // Persistence failures surface INLINE here, where the save happened
+            // (also mirrored to the main-window warnings banner by the model).
+            validationError = model.persistSettings()
         } catch {
-            validationError = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+            validationError = userFacingMessage(for: error)
         }
     }
 }
@@ -209,6 +210,7 @@ private struct PricesSettings: View {
     @State private var newInput = ""
     @State private var newOutput = ""
     @State private var addError: String?
+    @State private var saveError: String?
 
     var body: some View {
         Form {
@@ -224,15 +226,15 @@ private struct PricesSettings: View {
                             Text(modelID).frame(maxWidth: .infinity, alignment: .leading)
                             PriceField(label: "in", value: price.inputPerMTok) { newValue in
                                 model.priceTable.prices[modelID]?.inputPerMTok = newValue
-                                model.persistSettings()
+                                saveError = model.persistSettings()
                             }
                             PriceField(label: "out", value: price.outputPerMTok) { newValue in
                                 model.priceTable.prices[modelID]?.outputPerMTok = newValue
-                                model.persistSettings()
+                                saveError = model.persistSettings()
                             }
                             Button {
                                 model.priceTable.prices.removeValue(forKey: modelID)
-                                model.persistSettings()
+                                saveError = model.persistSettings()
                             } label: {
                                 Image(systemName: "trash")
                             }
@@ -240,6 +242,11 @@ private struct PricesSettings: View {
                             .help("Remove price for \(modelID)")
                         }
                     }
+                }
+                if let saveError {
+                    Label(saveError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
                 }
             }
             Section("Add a model price") {
@@ -280,24 +287,30 @@ private struct PricesSettings: View {
             return
         }
         model.priceTable.prices[modelID] = ModelPrice(inputPerMTok: input, outputPerMTok: output)
-        model.persistSettings()
+        addError = model.persistSettings()
         newModelID = ""
         newInput = ""
         newOutput = ""
-        addError = nil
     }
 }
 
+/// Price editor that commits on BOTH Return and focus loss (typing a value and
+/// clicking elsewhere used to silently discard the edit), and re-seeds its text
+/// when the underlying value changes externally (e.g. Restore Defaults).
 private struct PriceField: View {
     let label: String
-    @State var text: String
+    let value: Double
     let commit: (Double) -> Void
+
+    @State private var text: String
     @State private var invalid = false
+    @FocusState private var focused: Bool
 
     init(label: String, value: Double, commit: @escaping (Double) -> Void) {
         self.label = label
-        self._text = State(initialValue: String(value))
+        self.value = value
         self.commit = commit
+        self._text = State(initialValue: String(value))
     }
 
     var body: some View {
@@ -307,14 +320,25 @@ private struct PriceField: View {
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 70)
                 .foregroundStyle(invalid ? .red : .primary)
-                .onSubmit {
-                    if let value = Double(text), value >= 0 {
-                        invalid = false
-                        commit(value)
-                    } else {
-                        invalid = true
-                    }
+                .focused($focused)
+                .onSubmit { commitIfValid() }
+                .onChange(of: focused) { _, isFocused in
+                    if !isFocused { commitIfValid() }
                 }
+                .onChange(of: value) { _, newValue in
+                    // External change (another editor, Restore Defaults):
+                    // refresh the shadow state unless the user is mid-edit.
+                    if !focused { text = String(newValue) }
+                }
+        }
+    }
+
+    private func commitIfValid() {
+        if let parsed = Double(text), parsed >= 0 {
+            invalid = false
+            if parsed != value { commit(parsed) }
+        } else {
+            invalid = true
         }
     }
 }

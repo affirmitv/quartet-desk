@@ -24,6 +24,20 @@ final class PriceTableTests: XCTestCase {
         XCTAssertNil(PriceTable.bundledDefault.price(for: "qwen/qwen3.7-max"))
     }
 
+    func testAmbiguousBareNameCollisionReturnsNilNotARandomPick() {
+        // Two vendor-prefixed entries share the bare name at different prices.
+        // Dictionary iteration order is unspecified, so picking "the first" is
+        // a coin flip per process — the honest answer is "unpriced".
+        let table = PriceTable(prices: [
+            "openai/gpt-4o": ModelPrice(inputPerMTok: 2.5, outputPerMTok: 10.0),
+            "azure/gpt-4o": ModelPrice(inputPerMTok: 3.0, outputPerMTok: 12.0),
+        ])
+        XCTAssertNil(table.price(for: "gpt-4o"),
+                     "Colliding bare names must be treated as unpriced, never resolved nondeterministically")
+        // Exact matches still work, obviously.
+        XCTAssertEqual(table.price(for: "openai/gpt-4o"), ModelPrice(inputPerMTok: 2.5, outputPerMTok: 10.0))
+    }
+
     func testCostMath() {
         let legs = [
             UsageLeg(modelID: "claude-opus-4-8", usage: TokenUsage(inputTokens: 1_000_000, outputTokens: 200_000)),

@@ -12,11 +12,28 @@ Desk makes that disagreement a first-class output — a run without a parseable
 dissent record shows a **"dissent extraction failed"** banner rather than
 pretending consensus.
 
-## Status: v1 scaffold
+## Status: v1
 
-Engine, providers, UI, export, and history are implemented and compiling; the
-engine is unit-tested (52 tests). Live end-to-end runs against real APIs are
-**not yet verified** — you need to add your own API keys in Settings first.
+Engine, providers, UI, export, and history are implemented and unit-tested
+(engine with fakes/canned frames, the transport with canned HTTP responses,
+the app model's run lifecycle with injected resolvers). Live end-to-end runs
+(all 4 seats + synthesis + dissent) have been verified against the real APIs —
+you still need to add your own API keys in Settings first.
+
+Streaming calls retry transient failures (429/5xx/529, pre-data truncation)
+with bounded, jittered backoff — never after the first received byte, so a
+partial answer is never duplicated — and every provider call runs under a
+per-call wall-clock timeout so a wedged stream can't hang a run. Answers cut
+off at the model's token limit are kept but explicitly flagged as INCOMPLETE
+(per-seat banner, synthesis-prompt note, export note) rather than passed off
+as whole.
+
+## Branding
+
+Quartet Desk is published by **Affirmi Inc.** The `tv.affirmi` reverse-DNS
+namespace (bundle id, Keychain service, `os.Logger` subsystem) is the
+publisher's own domain and is intentional — it carries no infrastructure
+coupling (no hosts, project refs, or secrets).
 
 ## What it does
 
@@ -70,7 +87,11 @@ Sources/
     OpenAIChatClient          OpenAI + OpenRouter (Bearer, chat/completions SSE)
   QuartetExport/              MarkdownExporter + RunHistoryStore
   QuartetUI/                  SwiftUI views + @Observable AppModel + ImagePipeline
-Tests/QuartetEngineTests/     SSE, decoders, dissent, prices, prompts, orchestrator
+Tests/
+  QuartetEngineTests/         SSE, decoders, dissent, prices, prompts, orchestrator,
+                              retry policy, timeout, truncation
+  QuartetProvidersTests/      shared SSE transport vs canned HTTP (retry, envelopes)
+  QuartetUITests/             AppModel run lifecycle (Stop, usage math, attachments)
 ```
 
 Key boundaries:
@@ -116,8 +137,6 @@ OpenRouter (the defaults need those two), hit **Test** on each, then run a query
 
 ## Known gaps (v1)
 
-- Live API round-trips are unverified until keys are added (engine-level
-  behavior is covered by tests with canned frames/fakes).
 - Markdown rendering is modest (paragraph + fenced-code blocks, inline styles);
   headers/lists/tables render as plain-ish text.
 - Synthesis and deliberation requests resend text only; images go to round-1

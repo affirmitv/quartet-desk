@@ -56,7 +56,7 @@ final class AppModel {
     var seats: [Seat]
     var priceTable: PriceTable
     /// Non-fatal problems worth showing once (corrupt settings, unreadable history files).
-    var startupWarnings: [String] = []
+    var warnings: [String] = []
 
     // MARK: Composer
     var queryText: String = ""
@@ -103,12 +103,12 @@ final class AppModel {
             let (settings, loadError) = store.load()
             seats = settings.seats
             priceTable = settings.priceTable
-            if let loadError { startupWarnings.append(loadError) }
+            if let loadError { warnings.append(loadError) }
         } catch {
             Self.logger.error("Settings store unavailable: \(String(describing: error), privacy: .public)")
             seats = SeatConfiguration.defaultSeats()
             priceTable = .bundledDefault
-            startupWarnings.append("Settings could not be persisted (\(error.localizedDescription)); using in-memory defaults.")
+            warnings.append("Settings could not be persisted (\(error.localizedDescription)); using in-memory defaults.")
         }
 
         do {
@@ -117,23 +117,31 @@ final class AppModel {
             let result = store.loadAll()
             history = result.records
             for failure in result.failures {
-                startupWarnings.append("History file \(failure.file) failed to load: \(failure.error)")
+                warnings.append("History file \(failure.file) failed to load: \(failure.error)")
             }
         } catch {
             Self.logger.error("History store unavailable: \(String(describing: error), privacy: .public)")
-            startupWarnings.append("Run history could not be opened (\(error.localizedDescription)); runs will not be persisted this session.")
+            warnings.append("Run history could not be opened (\(error.localizedDescription)); runs will not be persisted this session.")
         }
     }
 
     // MARK: - Settings persistence
 
-    func persistSettings() {
-        guard let settingsStore else { return }
+    /// Returns the failure message (also appended to `warnings`) so the
+    /// Settings window can surface the error inline where the action happened.
+    @discardableResult
+    func persistSettings() -> String? {
+        guard let settingsStore else {
+            return "Settings storage is unavailable this session — changes apply in memory only."
+        }
         do {
             try settingsStore.save(PersistedSettings(seats: seats, priceTable: priceTable))
+            return nil
         } catch {
             Self.logger.error("Settings save failed: \(String(describing: error), privacy: .public)")
-            startupWarnings.append("Saving settings failed: \(error.localizedDescription)")
+            let message = "Saving settings failed: \(error.localizedDescription)"
+            warnings.append(message)
+            return message
         }
     }
 
@@ -369,7 +377,9 @@ final class AppModel {
                 try historyStore.delete(id: id)
             } catch {
                 Self.logger.error("History delete failed: \(String(describing: error), privacy: .public)")
-                runError = "Could not delete run from disk: \(error.localizedDescription)"
+                // Warnings banner, NOT runError — this is a history-management
+                // failure, and runError renders as if the last RUN failed.
+                warnings.append("Could not delete run from disk: \(error.localizedDescription)")
             }
         }
     }

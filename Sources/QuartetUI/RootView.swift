@@ -45,15 +45,17 @@ public struct QuartetRootView: View {
 
     @ViewBuilder
     private var detail: some View {
+        // The warnings banner renders in BOTH detail branches — a mid-session
+        // failure (settings save, history delete) must be visible even while a
+        // history record is selected, not only on the new-run screen.
         if let record = model.selectedRecord {
-            RecordDetailView(record: record, priceTable: model.priceTable)
+            VStack(spacing: 0) {
+                warningsBannerIfNeeded
+                RecordDetailView(record: record, priceTable: model.priceTable)
+            }
         } else {
             VStack(spacing: 0) {
-                if !model.startupWarnings.isEmpty {
-                    WarningsBanner(warnings: model.startupWarnings) {
-                        model.startupWarnings = []
-                    }
-                }
+                warningsBannerIfNeeded
                 ComposerView(model: model)
                     .padding()
                 Divider()
@@ -65,6 +67,15 @@ public struct QuartetRootView: View {
                         .padding(8)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var warningsBannerIfNeeded: some View {
+        if !model.warnings.isEmpty {
+            WarningsBanner(warnings: model.warnings) {
+                model.warnings = []
             }
         }
     }

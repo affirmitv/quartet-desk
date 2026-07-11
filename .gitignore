@@ -10,3 +10,7 @@ xcuserdata/
 
 # macOS
 .DS_Store
+
+# Never commit key material (smoke harness key drop file — lives in the app
+# container normally, but guard against a future harness writing it here)
+smoke-keys.json

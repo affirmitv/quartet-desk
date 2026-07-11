@@ -107,7 +107,7 @@ enum SmokeCapture {
     private static func importKeys() {
         guard let dir = shotsDirectory()?.deletingLastPathComponent() else { return }
         let file = dir.appendingPathComponent("smoke-keys.json")
-        defer { try? FileManager.default.removeItem(at: file) }
+        defer { destroyKeyFile(at: file) }
         do {
             let data = try Data(contentsOf: file)
             let keys = try JSONDecoder().decode([String: String].self, from: data)
@@ -124,6 +124,26 @@ enum SmokeCapture {
             logger.info("Smoke key import OK: \(imported.sorted().joined(separator: ","), privacy: .public)")
         } catch {
             logger.error("Smoke key import FAILED: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    /// Zero-overwrite then remove the plaintext key file. Failures are LOUD —
+    /// a silent `try?` here could leave real keys sitting in plaintext inside
+    /// the container with no trace (violates the zero-silent-failure rule).
+    private static func destroyKeyFile(at file: URL) {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: file.path) else { return }
+        do {
+            // Overwrite with zero bytes first so even an unlinked-but-recovered
+            // file carries no key material.
+            try Data().write(to: file, options: .atomic)
+        } catch {
+            logger.error("smoke-keys.json zero-overwrite FAILED: \(String(describing: error), privacy: .public)")
+        }
+        do {
+            try fm.removeItem(at: file)
+        } catch {
+            logger.error("smoke-keys.json cleanup FAILED — plaintext key file may remain at \(file.path, privacy: .public): \(String(describing: error), privacy: .public)")
         }
     }
 

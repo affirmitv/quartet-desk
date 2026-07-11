@@ -38,11 +38,18 @@ public struct PriceTable: Codable, Sendable, Equatable {
     /// Lookup with vendor-prefix tolerance: exact match first, then match on the
     /// path component after the last "/" (so "gpt-5.6-terra" via OpenAI direct
     /// resolves against the bundled "openai/gpt-5.6-terra" entry and vice versa).
+    ///
+    /// Deterministic and honest on collision: if MULTIPLE vendor-prefixed
+    /// entries share the bare name (e.g. "openai/gpt-4o" and "azure/gpt-4o" at
+    /// different prices), returns nil — the model shows as unpriced instead of
+    /// a number picked by unspecified Dictionary iteration order. The brand is
+    /// "never invent a number".
     public func price(for modelID: String) -> ModelPrice? {
         if let exact = prices[modelID] { return exact }
         let bare = Self.bareName(modelID)
         if let byBare = prices[bare] { return byBare }
-        return prices.first { Self.bareName($0.key) == bare }?.value
+        let bareMatches = prices.filter { Self.bareName($0.key) == bare }
+        return bareMatches.count == 1 ? bareMatches.first?.value : nil
     }
 
     static func bareName(_ modelID: String) -> String {
