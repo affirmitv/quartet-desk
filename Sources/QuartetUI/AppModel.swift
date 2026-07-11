@@ -68,6 +68,10 @@ final class AppModel {
     // changes and is drivable by the smoke harness)
     var resultTab: ResultTab = .answer
 
+    /// Bumped to move keyboard focus into the composer editor (e.g. the
+    /// onboarding "START MY FIRST RUN" CTA). ComposerView observes changes.
+    var composerFocusToken = 0
+
     // MARK: Run state
     private(set) var isRunning = false
     private(set) var seatStates: [SeatLiveState] = []

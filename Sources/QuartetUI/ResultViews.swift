@@ -9,6 +9,64 @@ enum ResultTab: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+// MARK: - Tab bar
+
+/// Brand tab bar (replaces the segmented picker): heavy tracked uppercase
+/// labels with a 2pt ice underline on the selected tab. Binds to the SAME
+/// selection the smoke harness drives (`model.resultTab` is untouched).
+struct QDTabBar: View {
+    @Binding var selection: ResultTab
+
+    var body: some View {
+        HStack(spacing: 24) {
+            ForEach(ResultTab.allCases) { tab in
+                TabItem(tab: tab, isSelected: selection == tab) {
+                    selection = tab
+                }
+            }
+            Spacer()
+        }
+        .frame(height: 40)
+        .padding(.horizontal)
+    }
+
+    private struct TabItem: View {
+        let tab: ResultTab
+        let isSelected: Bool
+        let select: () -> Void
+        @State private var hovering = false
+
+        var body: some View {
+            Button(action: select) {
+                Text(tab.rawValue)
+                    .font(.system(size: 12, weight: .heavy))
+                    .kerning(2.0)
+                    .foregroundStyle(isSelected ? QDTheme.ice : (hovering ? Color.white : QDTheme.text45))
+                    .overlay(alignment: .bottom) {
+                        if isSelected {
+                            Rectangle()
+                                .fill(QDTheme.ice)
+                                .frame(height: 2)
+                                .offset(y: 8)
+                        }
+                    }
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+            .accessibilityIdentifier("result-tab-\(tab.rawValue)")
+            .accessibilityLabel(Text(tab.rawValue.capitalized))
+            .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+        }
+    }
+}
+
+/// 1px brand hairline (flat replacement for Divider between brand panels).
+struct QDHairline: View {
+    var body: some View {
+        Rectangle().fill(QDTheme.line).frame(height: 1)
+    }
+}
+
 /// The three result tabs for the LIVE run. Tab selection lives on AppModel so
 /// it survives view identity changes (and is drivable by the smoke harness).
 struct LiveResultView: View {
@@ -16,35 +74,31 @@ struct LiveResultView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $model.resultTab) {
-                ForEach(ResultTab.allCases) { tab in
-                    Text(tab.rawValue).tag(tab)
+            QDTabBar(selection: $model.resultTab)
+
+            QDHairline()
+
+            Group {
+                switch model.resultTab {
+                case .answer:
+                    AnswerPane(status: model.synthesisStatus,
+                               liveText: model.liveAnswerText,
+                               record: model.lastRecord)
+                case .panel:
+                    PanelPane(seatStates: model.seatStates, priceTable: model.priceTable)
+                case .dissent:
+                    DissentPane(outcome: model.lastRecord?.dissent,
+                                isRunning: model.isRunning)
                 }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal)
-            .padding(.vertical, 6)
-
-            Divider()
-
-            switch model.resultTab {
-            case .answer:
-                AnswerPane(status: model.synthesisStatus,
-                           liveText: model.liveAnswerText,
-                           record: model.lastRecord)
-            case .panel:
-                PanelPane(seatStates: model.seatStates, priceTable: model.priceTable)
-            case .dissent:
-                DissentPane(outcome: model.lastRecord?.dissent,
-                            isRunning: model.isRunning)
-            }
-
-            if let cost = model.lastRecord?.cost {
-                Divider()
-                CostFooter(cost: cost)
+            // Material bottom bar: streamed content scrolls BEHIND it (§1.4).
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if let cost = model.lastRecord?.cost {
+                    CostFooter(cost: cost)
+                }
             }
         }
+        .background(QDTheme.ink)
     }
 }
 
@@ -65,26 +119,26 @@ struct AnswerPane: View {
                                            description: Text("Run the quartet to get a synthesized answer with dissent surfaced."))
                 case .waitingForPanel:
                     HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
+                        ProgressView().controlSize(.small).tint(QDTheme.ice)
                         Text("Panel round in progress — synthesis starts when the seats finish.")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(QDTheme.text60)
                     }
                 case .streaming:
                     MarkdownText(markdown: displayText)
                     HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text("Synthesizing…").foregroundStyle(.secondary)
+                        ProgressView().controlSize(.small).tint(QDTheme.ice)
+                        Text("Synthesizing…").foregroundStyle(QDTheme.text60)
                     }
                 case .done:
                     if record?.synthesisTruncated == true {
                         Label("Synthesis hit the token limit — this answer is INCOMPLETE.",
                               systemImage: "scissors")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(QDTheme.warn)
                     }
                     MarkdownText(markdown: displayText)
                 case .failed(let message):
                     Label(message, systemImage: "xmark.octagon.fill")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(QDTheme.bad)
                     if !displayText.isEmpty {
                         MarkdownText(markdown: displayText)
                     }
@@ -137,19 +191,27 @@ struct SeatCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 4) {
-                        Text(state.seat.name).font(.headline)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(state.seat.name)
+                            .qdSectionHeader()
                         if state.seat.isAnchor {
-                            Image(systemName: "star.fill")
-                                .font(.caption2)
-                                .foregroundStyle(.orange)
+                            // Mirrors landing `.badge`: ice background, ink text.
+                            Text("ANCHOR")
+                                .font(.system(size: 9, weight: .heavy))
+                                .kerning(1.2)
+                                .textCase(.uppercase)
+                                .foregroundStyle(QDTheme.ink)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(QDTheme.ice)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
                                 .help("Anchor seat (synthesizer)")
+                                .accessibilityLabel("Anchor seat")
                         }
                     }
                     Text(state.seat.modelID)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .qdMeta()
                         .lineLimit(1)
                 }
                 Spacer()
@@ -160,59 +222,65 @@ struct SeatCard: View {
                 Label("Revision failed — showing round-1 answer. \(revisionFailed)",
                       systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(QDTheme.warn)
             }
 
             if state.truncated {
                 Label("Answer hit the model's token limit — it is INCOMPLETE.",
                       systemImage: "scissors")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(QDTheme.warn)
                     .help("The provider stopped at max_tokens. Raise the per-seat token cap or shorten the query.")
             }
 
-            Divider()
+            QDHairline()
 
             ScrollView {
                 if case .failed(let message) = state.status {
                     Label(message, systemImage: "xmark.octagon.fill")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(QDTheme.bad)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else if state.status == .cancelled && state.text.isEmpty {
                     Text("Stopped before this seat answered.")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(QDTheme.text60)
                 } else if state.text.isEmpty {
                     Text("Waiting…")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(QDTheme.text60)
                 } else {
                     MarkdownText(markdown: state.text)
                 }
             }
             .frame(minHeight: 160, maxHeight: .infinity)
 
-            Divider()
+            QDHairline()
             footer
         }
         .padding(10)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(QDTheme.panel)
+        // 2px ice top edge on the ANCHOR card only (echoes landing `.bcast`).
+        .overlay(alignment: .top) {
+            if state.seat.isAnchor {
+                Rectangle().fill(QDTheme.ice).frame(height: 2)
+            }
+        }
         .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.2)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(QDTheme.line, lineWidth: 1))
     }
 
     @ViewBuilder
     private var statusBadge: some View {
         switch state.status {
         case .idle:
-            Image(systemName: "circle.dashed").foregroundStyle(.secondary)
+            Image(systemName: "circle.dashed").foregroundStyle(QDTheme.text45)
         case .streaming, .revising:
-            ProgressView().controlSize(.small)
+            ProgressView().controlSize(.small).tint(QDTheme.ice)
         case .done:
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(QDTheme.ice)
         case .failed:
-            Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+            Image(systemName: "xmark.octagon.fill").foregroundStyle(QDTheme.bad)
         case .cancelled:
             Image(systemName: "stop.circle.fill")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(QDTheme.text45)
                 .help("Run was stopped before this seat finished")
         }
     }
@@ -221,25 +289,22 @@ struct SeatCard: View {
         HStack {
             if let usage = state.usage {
                 Text("\(usage.inputTokens) in / \(usage.outputTokens) out")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .qdMeta()
                 Spacer()
                 if let price = priceTable.price(for: state.seat.modelID) {
                     let usd = Double(usage.inputTokens) / 1_000_000 * price.inputPerMTok
                         + Double(usage.outputTokens) / 1_000_000 * price.outputPerMTok
                     Text(String(format: "$%.4f", usd))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .qdMeta()
                 } else {
                     Text("price not set")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(QDTheme.warn)
                         .help("No price configured for \(state.seat.modelID) — add one in Settings → Prices.")
                 }
             } else {
                 Text("no usage reported yet")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .qdMeta()
                 Spacer()
             }
         }
@@ -259,8 +324,8 @@ struct DissentPane: View {
                 case nil:
                     if isRunning {
                         HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text("Dissent analysis arrives with synthesis.").foregroundStyle(.secondary)
+                            ProgressView().controlSize(.small).tint(QDTheme.ice)
+                            Text("Dissent analysis arrives with synthesis.").foregroundStyle(QDTheme.text60)
                         }
                     } else {
                         ContentUnavailableView("No dissent analysis yet",
@@ -270,39 +335,49 @@ struct DissentPane: View {
                 case .notRun:
                     Label("Synthesis did not run — no dissent analysis available.",
                           systemImage: "minus.circle")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(QDTheme.text60)
                 case .extractionFailed(let reason):
                     // FAIL CLOSED: never show "no dissent" when we simply couldn't parse it.
                     VStack(alignment: .leading, spacing: 6) {
                         Label("Dissent extraction failed — do NOT assume the panel agreed.",
                               systemImage: "exclamationmark.triangle.fill")
                             .font(.headline)
+                            .foregroundStyle(.white)
                         Text(reason)
                             .font(.callout)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(QDTheme.text60)
                         Text("Read the PANEL tab to compare the answers yourself.")
                             .font(.callout)
+                            .foregroundStyle(QDTheme.text60)
                     }
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.yellow.opacity(0.15))
+                    .background(QDTheme.bad.opacity(0.12))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(QDTheme.bad.opacity(0.5), lineWidth: 1))
                 case .parsed(let items) where items.isEmpty:
                     Label("The panel materially agreed — no dissent recorded.",
                           systemImage: "checkmark.seal.fill")
-                        .foregroundStyle(.green)
+                        .foregroundStyle(QDTheme.ice)
                 case .parsed(let items):
                     ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(item.topic).font(.headline)
+                            Text(item.topic).qdSectionHeader()
                             Label(item.who, systemImage: "person.fill")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(QDTheme.iceDim)
                             Text(item.position)
+                                .font(.system(size: 13))
+                                .foregroundStyle(QDTheme.text60)
                         }
                         .padding(10)
+                        .padding(.leading, 4)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(nsColor: .controlBackgroundColor))
+                        .background(QDTheme.panel)
+                        // 2px ice accent bar on the leading edge (clipped with the card).
+                        .overlay(alignment: .leading) {
+                            Rectangle().fill(QDTheme.ice).frame(width: 2)
+                        }
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                 }
@@ -321,12 +396,20 @@ struct CostFooter: View {
     var body: some View {
         HStack {
             Image(systemName: "dollarsign.circle")
+                .foregroundStyle(QDTheme.ice)
             Text(MarkdownExporter.costLine(cost))
                 .font(.callout)
-                .foregroundStyle(cost.isFullyPriced ? Color.secondary : Color.orange)
+                .monospacedDigit()
+                .foregroundStyle(cost.isFullyPriced ? QDTheme.text60 : QDTheme.warn)
             Spacer()
         }
         .padding(.horizontal)
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
+        // One of exactly two sanctioned translucency surfaces (§1.4): content
+        // scrolls behind this bar via safeAreaInset.
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .top) { QDHairline() }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Run cost: \(MarkdownExporter.costLine(cost))")
     }
 }

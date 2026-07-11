@@ -2,23 +2,30 @@ import SwiftUI
 import QuartetEngine
 
 /// Sidebar list of persisted runs.
+///
+/// Deliberately KEEPS the system sidebar material (`.listStyle(.sidebar)`
+/// inside NavigationSplitView) — one of exactly two sanctioned translucency
+/// surfaces (§1.4). Do NOT paint this with QDTheme.ink: behind-window blur is
+/// the brand look here. (Smoke PNGs render it flat — offscreen caches can't
+/// sample the backdrop; capture-only artifact, verify translucency live.)
 struct HistorySidebar: View {
     @Bindable var model: AppModel
 
     var body: some View {
         List(selection: $model.selectedRecordID) {
-            Section("Runs") {
+            Section {
                 if model.history.isEmpty {
                     Text("No runs yet")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(QDTheme.text45)
                 } else {
                     ForEach(model.history) { record in
                         VStack(alignment: .leading, spacing: 2) {
                             Text(titleLine(record))
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.white)
                                 .lineLimit(1)
                             Text(record.createdAt.formatted(date: .abbreviated, time: .shortened))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .qdMeta()
                         }
                         .tag(record.id)
                         .contextMenu {
@@ -28,6 +35,8 @@ struct HistorySidebar: View {
                         }
                     }
                 }
+            } header: {
+                Text("Runs").qdKicker()
             }
         }
         .listStyle(.sidebar)
@@ -38,7 +47,9 @@ struct HistorySidebar: View {
                 Label("New Run", systemImage: "plus")
                     .frame(maxWidth: .infinity)
             }
+            .buttonStyle(QDGhostButtonStyle())
             .padding(8)
+            .accessibilityLabel("New Run")
         }
     }
 
@@ -59,76 +70,74 @@ struct RecordDetailView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(record.queryText.replacingOccurrences(of: "\n", with: " ").prefix(120))
-                        .font(.headline)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.white)
                         .lineLimit(2)
                     HStack(spacing: 8) {
                         Text(record.createdAt.formatted(date: .abbreviated, time: .shortened))
                         if record.deliberate { Label("Deliberated", systemImage: "arrow.triangle.2.circlepath") }
                         if record.imageCount > 0 { Label("\(record.imageCount) image(s)", systemImage: "photo") }
                     }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(QDTheme.text45)
                 }
                 Spacer()
             }
             .padding()
 
-            Picker("", selection: $tab) {
-                ForEach(ResultTab.allCases) { tab in
-                    Text(tab.rawValue).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal)
-            .padding(.bottom, 6)
+            QDTabBar(selection: $tab)
 
-            Divider()
+            QDHairline()
 
-            switch tab {
-            case .answer:
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        if let answer = record.synthesizedAnswer, !answer.isEmpty {
-                            if record.synthesisTruncated {
-                                Label("Synthesis hit the token limit — this answer is INCOMPLETE.",
-                                      systemImage: "scissors")
-                                    .foregroundStyle(.orange)
+            Group {
+                switch tab {
+                case .answer:
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            if let answer = record.synthesizedAnswer, !answer.isEmpty {
+                                if record.synthesisTruncated {
+                                    Label("Synthesis hit the token limit — this answer is INCOMPLETE.",
+                                          systemImage: "scissors")
+                                        .foregroundStyle(QDTheme.warn)
+                                }
+                                MarkdownText(markdown: answer)
+                            } else {
+                                Label(record.synthesisError ?? "No synthesized answer was produced.",
+                                      systemImage: "xmark.octagon.fill")
+                                    .foregroundStyle(QDTheme.bad)
                             }
-                            MarkdownText(markdown: answer)
-                        } else {
-                            Label(record.synthesisError ?? "No synthesized answer was produced.",
-                                  systemImage: "xmark.octagon.fill")
-                                .foregroundStyle(.red)
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
+                case .panel:
+                    PanelPane(seatStates: record.seats.map { transcript in
+                        var state = SeatLiveState(seat: Seat(id: transcript.id,
+                                                             name: transcript.seatName,
+                                                             provider: transcript.provider,
+                                                             modelID: transcript.modelID,
+                                                             isAnchor: transcript.isAnchor))
+                        state.text = transcript.text
+                        state.usage = transcript.usage
+                        state.truncated = transcript.truncated
+                        state.status = transcript.errorMessage.map { .failed($0) } ?? .done
+                        if transcript.revisionFailed {
+                            state.revisionFailedMessage = "Deliberation revision failed."
+                        }
+                        return state
+                    }, priceTable: priceTable)
+                case .dissent:
+                    DissentPane(outcome: record.dissent, isRunning: false)
                 }
-            case .panel:
-                PanelPane(seatStates: record.seats.map { transcript in
-                    var state = SeatLiveState(seat: Seat(id: transcript.id,
-                                                         name: transcript.seatName,
-                                                         provider: transcript.provider,
-                                                         modelID: transcript.modelID,
-                                                         isAnchor: transcript.isAnchor))
-                    state.text = transcript.text
-                    state.usage = transcript.usage
-                    state.truncated = transcript.truncated
-                    state.status = transcript.errorMessage.map { .failed($0) } ?? .done
-                    if transcript.revisionFailed {
-                        state.revisionFailedMessage = "Deliberation revision failed."
-                    }
-                    return state
-                }, priceTable: priceTable)
-            case .dissent:
-                DissentPane(outcome: record.dissent, isRunning: false)
             }
-
-            Divider()
-            CostFooter(cost: record.cost)
+            // Material bottom bar; record content scrolls behind it (§1.4).
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                CostFooter(cost: record.cost)
+            }
         }
+        .background(QDTheme.ink)
     }
 }

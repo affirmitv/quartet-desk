@@ -15,6 +15,8 @@ struct QuartetDeskApp: App {
         WindowGroup {
             root.rootView()
                 .frame(minWidth: 980, minHeight: 640)
+                // Brand is dark-only in v1 (§1.2) — applied at every scene root.
+                .preferredColorScheme(.dark)
         }
         .commands {
             CommandGroup(replacing: .appInfo) {
@@ -30,6 +32,7 @@ struct QuartetDeskApp: App {
 
         Settings {
             root.settingsView()
+                .preferredColorScheme(.dark)
         }
     }
 }

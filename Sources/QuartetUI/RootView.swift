@@ -53,21 +53,23 @@ public struct QuartetRootView: View {
                 warningsBannerIfNeeded
                 RecordDetailView(record: record, priceTable: model.priceTable)
             }
+            .background(QDTheme.ink)
         } else {
             VStack(spacing: 0) {
                 warningsBannerIfNeeded
                 ComposerView(model: model)
                     .padding()
-                Divider()
+                QDHairline()
                 LiveResultView(model: model)
                 if let runError = model.runError {
-                    Divider()
+                    QDHairline()
                     Label(runError, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(QDTheme.bad)
                         .padding(8)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+            .background(QDTheme.ink)
         }
     }
 
@@ -136,7 +138,7 @@ private struct WarningsBanner: View {
     var body: some View {
         HStack(alignment: .top) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
+                .foregroundStyle(QDTheme.warn)
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(Array(warnings.enumerated()), id: \.offset) { _, warning in
                     Text(warning).font(.callout)
@@ -149,9 +151,10 @@ private struct WarningsBanner: View {
                 Image(systemName: "xmark")
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss warnings")
         }
         .padding(8)
-        .background(Color.orange.opacity(0.12))
+        .background(QDTheme.warn.opacity(0.12))
     }
 }
 

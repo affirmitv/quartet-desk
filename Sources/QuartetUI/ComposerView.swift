@@ -7,6 +7,7 @@ import QuartetEngine
 /// (drag-drop / paste / file picker), Deliberate toggle, Run/Stop.
 struct ComposerView: View {
     @Bindable var model: AppModel
+    @FocusState private var editorFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -16,16 +17,24 @@ struct ComposerView: View {
                     .frame(minHeight: 90, maxHeight: 180)
                     .scrollContentBackground(.hidden)
                     .padding(6)
-                    .background(Color(nsColor: .textBackgroundColor))
+                    .background(QDTheme.panel)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3)))
+                    .overlay(RoundedRectangle(cornerRadius: 8)
+                        .stroke(editorFocused ? QDTheme.ice.opacity(0.6) : QDTheme.line, lineWidth: 1))
+                    .focused($editorFocused)
+                    .accessibilityLabel("Query")
                 if model.queryText.isEmpty {
                     Text("Ask the quartet anything — e.g. \u{201C}write me a marketing plan\u{201D}")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(QDTheme.text45)
                         .padding(.top, 12)
                         .padding(.leading, 12)
                         .allowsHitTesting(false)
                 }
+            }
+            .onChange(of: model.composerFocusToken) { _, _ in
+                // Bumped by onboarding "START MY FIRST RUN" — land the cursor
+                // in the composer so the user can just type.
+                editorFocused = true
             }
             .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
                 handleDrop(providers)
@@ -64,14 +73,18 @@ struct ComposerView: View {
                     } label: {
                         Label("Stop", systemImage: "stop.fill")
                     }
+                    .buttonStyle(QDGhostButtonStyle(tint: QDTheme.bad))
+                    .accessibilityLabel("Stop run")
                 } else {
                     Button {
                         model.startRun()
                     } label: {
                         Label("Run Quartet", systemImage: "play.fill")
                     }
+                    .buttonStyle(QDPrimaryButtonStyle())
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(!model.canRun)
+                    .accessibilityLabel("Run Quartet")
                 }
             }
             .controlSize(.small)
@@ -79,7 +92,7 @@ struct ComposerView: View {
             if let attachmentError = model.attachmentError {
                 Label(attachmentError, systemImage: "exclamationmark.triangle.fill")
                     .font(.callout)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(QDTheme.bad)
             }
         }
     }
@@ -88,8 +101,9 @@ struct ComposerView: View {
         let count = model.queryText.count
         let over = count > Limits.querySoftCapCharacters
         return Text("\(count.formatted()) / \(Limits.querySoftCapCharacters.formatted())")
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(over ? .red : .secondary)
+            .font(.system(size: 11, weight: .medium))
+            .monospacedDigit()
+            .foregroundStyle(over ? QDTheme.bad : QDTheme.text45)
             .help(over ? "Over the soft cap — the run will still go through, but consider trimming." : "Character count (soft cap)")
     }
 
@@ -202,15 +216,18 @@ private struct AttachmentChip: View {
                 Image(systemName: "photo")
             }
             Text("Image \(index + 1)")
-                .font(.caption)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(QDTheme.text60)
             Button(action: onRemove) {
                 Image(systemName: "xmark.circle.fill")
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Remove image \(index + 1)")
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
-        .background(Color.secondary.opacity(0.15))
+        .background(QDTheme.panel)
         .clipShape(Capsule())
+        .overlay(Capsule().stroke(QDTheme.line, lineWidth: 1))
     }
 }
