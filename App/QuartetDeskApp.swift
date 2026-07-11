@@ -22,6 +22,10 @@ struct QuartetDeskApp: App {
             CommandGroup(replacing: .appInfo) {
                 AboutCommand()
             }
+            CommandGroup(after: .help) {
+                // Re-opens the first-run tour ("Setup Assistant").
+                root.welcomeCommand()
+            }
         }
 
         Window("About Quartet Desk", id: "about") {

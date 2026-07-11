@@ -54,7 +54,9 @@ struct QDTabBar: View {
             .buttonStyle(.plain)
             .onHover { hovering = $0 }
             .accessibilityIdentifier("result-tab-\(tab.rawValue)")
-            .accessibilityLabel(Text(tab.rawValue.capitalized))
+            // Label stays the visible rawValue ("PANEL") — the live UITest
+            // queries buttons["PANEL"] etc.
+            .accessibilityLabel(Text(tab.rawValue))
             .accessibilityAddTraits(isSelected ? [.isSelected] : [])
         }
     }
@@ -409,7 +411,7 @@ struct CostFooter: View {
         // scrolls behind this bar via safeAreaInset.
         .background(.ultraThinMaterial)
         .overlay(alignment: .top) { QDHairline() }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Run cost: \(MarkdownExporter.costLine(cost))")
+        // NOTE: no .accessibilityElement(children: .combine) here — the live
+        // UITest asserts on a staticText containing "$"; combining would hide it.
     }
 }

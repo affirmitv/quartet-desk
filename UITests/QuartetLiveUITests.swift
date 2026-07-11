@@ -14,6 +14,9 @@ final class QuartetLiveUITests: XCTestCase {
 
     func testLiveQuartetRun() throws {
         let app = XCUIApplication()
+        // A fresh container would otherwise open the first-run onboarding
+        // sheet over the composer and stall the run.
+        app.launchArguments += ["--suppress-onboarding"]
         app.launch()
 
         let window = app.windows.firstMatch

@@ -74,7 +74,9 @@ struct ComposerView: View {
                         Label("Stop", systemImage: "stop.fill")
                     }
                     .buttonStyle(QDGhostButtonStyle(tint: QDTheme.bad))
-                    .accessibilityLabel("Stop run")
+                    // Exactly "Stop" — the live UITest queries buttons["Stop"],
+                    // and textCase(.uppercase) is display-only.
+                    .accessibilityLabel("Stop")
                 } else {
                     Button {
                         model.startRun()

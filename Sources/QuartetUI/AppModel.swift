@@ -72,6 +72,21 @@ final class AppModel {
     /// onboarding "START MY FIRST RUN" CTA). ComposerView observes changes.
     var composerFocusToken = 0
 
+    // MARK: Onboarding
+    static let onboardingCompletedDefaultsKey = "qd.onboarding.completed"
+
+    /// First-run wizard sheet visibility. Shown on first launch until the
+    /// persisted flag is set; ANY dismissal (finish or skip) sets the flag.
+    /// Re-openable anytime via Help → Welcome to Quartet Desk….
+    var showOnboarding = false
+
+    /// Persists the completed flag and hides the sheet. Idempotent — also
+    /// called from the sheet's onDisappear so Escape-dismissal counts too.
+    func dismissOnboarding() {
+        UserDefaults.standard.set(true, forKey: Self.onboardingCompletedDefaultsKey)
+        showOnboarding = false
+    }
+
     // MARK: Run state
     private(set) var isRunning = false
     private(set) var seatStates: [SeatLiveState] = []
@@ -101,6 +116,13 @@ final class AppModel {
 
     init() {
         resolver = KeychainProviderResolver()
+        // First-run onboarding. Suppressed for scripted drivers (smoke harness
+        // and the live XCUITest) so a fresh container never blocks them with a
+        // sheet; the test-only init never shows it (no UserDefaults touch).
+        let scripted = SmokeCapture.isEnabled
+            || ProcessInfo.processInfo.arguments.contains("--suppress-onboarding")
+        showOnboarding = !UserDefaults.standard.bool(forKey: Self.onboardingCompletedDefaultsKey)
+            && !scripted
         do {
             let store = try SettingsStore()
             settingsStore = store

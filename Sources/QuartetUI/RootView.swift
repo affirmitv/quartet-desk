@@ -36,6 +36,10 @@ public struct QuartetRootView: View {
             Text(exportError ?? "")
         }
         .navigationTitle("Quartet Desk")
+        // First-run onboarding (§3). The sheet inherits the root's dark scheme.
+        .sheet(isPresented: $model.showOnboarding) {
+            OnboardingView(model: model)
+        }
         .onReceive(DistributedNotificationCenter.default().publisher(for: SmokeCapture.openSettingsNotification)) { _ in
             // Smoke harness only — inert unless launched with --smoke-shots.
             guard SmokeCapture.isEnabled else { return }
@@ -175,5 +179,22 @@ public struct QuartetDeskRoot {
 
     public func settingsView() -> some View {
         QuartetSettingsView(model: model)
+    }
+
+    /// Help-menu command that re-presents the onboarding tour (§3). Lives here
+    /// because AppModel is internal to QuartetUI; the app target just mounts it.
+    public func welcomeCommand() -> some View {
+        WelcomeCommandButton(model: model)
+    }
+}
+
+/// "Welcome to Quartet Desk…" Help-menu item — re-opens the onboarding sheet.
+struct WelcomeCommandButton: View {
+    let model: AppModel
+
+    var body: some View {
+        Button("Welcome to Quartet Desk…") {
+            model.showOnboarding = true
+        }
     }
 }
