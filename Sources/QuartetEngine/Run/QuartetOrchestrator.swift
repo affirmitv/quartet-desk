@@ -8,17 +8,23 @@ public struct QuartetRunConfig: Sendable {
     public var maxTokensPerSeat: Int
     public var maxTokensSynthesis: Int
     public var priceTable: PriceTable
+    /// Wall-clock ceiling per provider call (seat leg or synthesis). A stream
+    /// that neither completes nor errors within this window is cancelled and
+    /// the seat fails with ProviderError.timedOut — no run hangs forever.
+    public var perCallWallClockSeconds: TimeInterval
 
     public init(seats: [Seat],
                 deliberate: Bool = false,
                 maxTokensPerSeat: Int = 8192,
                 maxTokensSynthesis: Int = 16384,
-                priceTable: PriceTable = .bundledDefault) {
+                priceTable: PriceTable = .bundledDefault,
+                perCallWallClockSeconds: TimeInterval = 600) {
         self.seats = seats
         self.deliberate = deliberate
         self.maxTokensPerSeat = maxTokensPerSeat
         self.maxTokensSynthesis = maxTokensSynthesis
         self.priceTable = priceTable
+        self.perCallWallClockSeconds = perCallWallClockSeconds
     }
 }
 
@@ -38,6 +44,8 @@ public enum QuartetEvent: Sendable {
     case seatDelta(seatID: UUID, text: String)
     case seatUsage(seatID: UUID, usage: TokenUsage)
     case seatCompleted(seatID: UUID, text: String, usage: TokenUsage?)
+    /// The seat's answer hit the provider token limit — text is kept but INCOMPLETE.
+    case seatTruncated(seatID: UUID)
     case seatFailed(seatID: UUID, message: String)
     case seatRevisionBegan(seatID: UUID)
     case seatRevisionDelta(seatID: UUID, text: String)
@@ -90,6 +98,15 @@ public struct QuartetOrchestrator: Sendable {
         var legs: [UsageLeg]
         var errorMessage: String?
         var revisionFailed: Bool
+        var truncated: Bool
+    }
+
+    /// Stop reasons that mean "the text was cut off at the token limit":
+    /// Anthropic reports "max_tokens" (and "model_context_window_exceeded");
+    /// OpenAI-compatible endpoints report "length".
+    static func isTruncationStopReason(_ reason: String?) -> Bool {
+        guard let reason else { return false }
+        return ["max_tokens", "length", "model_context_window_exceeded"].contains(reason)
     }
 
     private static func execute(query: QuartetQuery,
@@ -145,7 +162,7 @@ public struct QuartetOrchestrator: Sendable {
         let orderedOutcomes = config.seats.compactMap { outcomes[$0.id] }
         let answers = orderedOutcomes
             .filter { $0.errorMessage == nil }
-            .map { PanelAnswer(seatName: $0.seat.name, modelID: $0.seat.modelID, text: $0.text) }
+            .map { PanelAnswer(seatName: $0.seat.name, modelID: $0.seat.modelID, text: $0.text, truncated: $0.truncated) }
         let failures = orderedOutcomes
             .filter { $0.errorMessage != nil }
             .map { PanelFailure(seatName: $0.seat.name, modelID: $0.seat.modelID, reason: $0.errorMessage ?? "unknown") }
@@ -157,6 +174,7 @@ public struct QuartetOrchestrator: Sendable {
         var synthesisRaw: String?
         var synthesisUsage: TokenUsage?
         var synthesisError: String?
+        var synthesisTruncated = false
         var dissent: DissentOutcome = .notRun
 
         if outcomes[anchor.id]?.errorMessage != nil {
@@ -174,16 +192,22 @@ public struct QuartetOrchestrator: Sendable {
             ]
             let request = SeatRequest(seat: anchor, messages: messages, maxTokens: config.maxTokensSynthesis)
             do {
-                let result = try await collectStream(request: request, resolver: resolver) { delta in
+                let result = try await collectStream(request: request,
+                                                     resolver: resolver,
+                                                     timeout: config.perCallWallClockSeconds) { delta in
                     continuation.yield(.synthesisDelta(text: delta))
                 }
                 synthesisRaw = result.text
                 synthesisUsage = result.usage
+                synthesisTruncated = isTruncationStopReason(result.stopReason)
+                if synthesisTruncated {
+                    logger.warning("Synthesis hit the token limit (stop=\(result.stopReason ?? "?", privacy: .public)) — flagged as truncated")
+                }
                 let parsed = DissentParser.parse(synthesisOutput: result.text)
                 synthesizedAnswer = parsed.answer
                 dissent = parsed.outcome
             } catch {
-                synthesisError = errorMessage(from: error)
+                synthesisError = userFacingMessage(for: error)
                 logger.error("Synthesis failed: \(String(describing: error), privacy: .public)")
                 continuation.yield(.synthesisFailed(message: synthesisError!))
             }
@@ -206,7 +230,8 @@ public struct QuartetOrchestrator: Sendable {
                            text: outcome.text,
                            usage: outcome.legs.isEmpty ? nil : outcome.legs.map(\.usage).reduce(TokenUsage(inputTokens: 0, outputTokens: 0), +),
                            errorMessage: outcome.errorMessage,
-                           revisionFailed: outcome.revisionFailed)
+                           revisionFailed: outcome.revisionFailed,
+                           truncated: outcome.truncated)
         }
 
         return RunRecord(id: UUID(),
@@ -219,6 +244,7 @@ public struct QuartetOrchestrator: Sendable {
                          synthesisRaw: synthesisRaw,
                          synthesisUsage: synthesisUsage,
                          synthesisError: synthesisError,
+                         synthesisTruncated: synthesisTruncated,
                          dissent: dissent,
                          cost: cost)
     }
@@ -237,19 +263,28 @@ public struct QuartetOrchestrator: Sendable {
         ]
         let request = SeatRequest(seat: seat, messages: messages, maxTokens: config.maxTokensPerSeat)
         do {
-            let result = try await collectStream(request: request, resolver: resolver) { delta in
+            let result = try await collectStream(request: request,
+                                                 resolver: resolver,
+                                                 timeout: config.perCallWallClockSeconds) { delta in
                 continuation.yield(.seatDelta(seatID: seat.id, text: delta))
             } onUsage: { usage in
                 continuation.yield(.seatUsage(seatID: seat.id, usage: usage))
             }
             continuation.yield(.seatCompleted(seatID: seat.id, text: result.text, usage: result.usage))
+            let truncated = isTruncationStopReason(result.stopReason)
+            if truncated {
+                logger.warning("Seat \(seat.name, privacy: .public) hit the token limit (stop=\(result.stopReason ?? "?", privacy: .public)) — flagged as truncated")
+                continuation.yield(.seatTruncated(seatID: seat.id))
+            }
             let legs = result.usage.map { [UsageLeg(modelID: seat.modelID, usage: $0)] } ?? []
-            return SeatOutcome(seat: seat, text: result.text, legs: legs, errorMessage: nil, revisionFailed: false)
+            return SeatOutcome(seat: seat, text: result.text, legs: legs,
+                               errorMessage: nil, revisionFailed: false, truncated: truncated)
         } catch {
-            let message = errorMessage(from: error)
+            let message = userFacingMessage(for: error)
             logger.error("Seat \(seat.name, privacy: .public) failed: \(String(describing: error), privacy: .public)")
             continuation.yield(.seatFailed(seatID: seat.id, message: message))
-            return SeatOutcome(seat: seat, text: "", legs: [], errorMessage: message, revisionFailed: false)
+            return SeatOutcome(seat: seat, text: "", legs: [],
+                               errorMessage: message, revisionFailed: false, truncated: false)
         }
     }
 
@@ -269,7 +304,9 @@ public struct QuartetOrchestrator: Sendable {
         ]
         let request = SeatRequest(seat: seat, messages: messages, maxTokens: config.maxTokensPerSeat)
         do {
-            let result = try await collectStream(request: request, resolver: resolver) { delta in
+            let result = try await collectStream(request: request,
+                                                 resolver: resolver,
+                                                 timeout: config.perCallWallClockSeconds) { delta in
                 continuation.yield(.seatRevisionDelta(seatID: seat.id, text: delta))
             } onUsage: { usage in
                 continuation.yield(.seatUsage(seatID: seat.id, usage: usage))
@@ -277,6 +314,12 @@ public struct QuartetOrchestrator: Sendable {
             continuation.yield(.seatRevised(seatID: seat.id, text: result.text, usage: result.usage))
             var revised = outcome
             revised.text = result.text
+            // The revision REPLACES the text, so its stop reason replaces the flag.
+            revised.truncated = isTruncationStopReason(result.stopReason)
+            if revised.truncated {
+                logger.warning("Deliberation for seat \(seat.name, privacy: .public) hit the token limit — flagged as truncated")
+                continuation.yield(.seatTruncated(seatID: seat.id))
+            }
             if let usage = result.usage {
                 revised.legs.append(UsageLeg(modelID: seat.modelID, usage: usage))
             }
@@ -284,7 +327,7 @@ public struct QuartetOrchestrator: Sendable {
         } catch {
             // Fail-soft for revisions only: the seat KEEPS its round-1 answer,
             // and the failure is surfaced (event + transcript flag) — never hidden.
-            let message = errorMessage(from: error)
+            let message = userFacingMessage(for: error)
             logger.error("Deliberation for seat \(seat.name, privacy: .public) failed; keeping round-1 answer: \(String(describing: error), privacy: .public)")
             continuation.yield(.seatRevisionFailed(seatID: seat.id, message: message))
             var kept = outcome
@@ -299,13 +342,39 @@ public struct QuartetOrchestrator: Sendable {
         var stopReason: String?
     }
 
-    /// Drains a provider stream into a full answer. Throws on transport/provider
-    /// errors, on missing terminal chunk (the client throws truncatedStream), and
-    /// on an empty final answer.
+    /// Drains a provider stream into a full answer under a wall-clock deadline.
+    /// Throws on transport/provider errors, on missing terminal chunk (the
+    /// client throws truncatedStream), on an empty final answer, and on
+    /// exceeding `timeout` (ProviderError.timedOut — no seat can hang a run
+    /// forever; the losing branch is cancelled either way).
     private static func collectStream(request: SeatRequest,
                                       resolver: any ProviderResolving,
-                                      onDelta: @Sendable (String) -> Void,
-                                      onUsage: @Sendable (TokenUsage) -> Void = { _ in }) async throws -> CollectedResult {
+                                      timeout: TimeInterval,
+                                      onDelta: @escaping @Sendable (String) -> Void,
+                                      onUsage: @escaping @Sendable (TokenUsage) -> Void = { _ in }) async throws -> CollectedResult {
+        try await withThrowingTaskGroup(of: CollectedResult.self) { group in
+            group.addTask {
+                try await drainStream(request: request, resolver: resolver,
+                                      onDelta: onDelta, onUsage: onUsage)
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                throw ProviderError.timedOut(afterSeconds: timeout)
+            }
+            // First child to finish wins: either the drained result, or the
+            // deadline throwing timedOut. Cancel the loser.
+            guard let result = try await group.next() else {
+                throw ProviderError.invalidResponse // unreachable: group is never empty
+            }
+            group.cancelAll()
+            return result
+        }
+    }
+
+    private static func drainStream(request: SeatRequest,
+                                    resolver: any ProviderResolving,
+                                    onDelta: @Sendable (String) -> Void,
+                                    onUsage: @Sendable (TokenUsage) -> Void) async throws -> CollectedResult {
         let client = try resolver.client(for: request.seat)
         let apiKey = try resolver.apiKey(for: request.seat.provider)
         var text = ""
@@ -327,18 +396,13 @@ public struct QuartetOrchestrator: Sendable {
         }
         guard completed else {
             // Belt and braces: clients throw before we get here, but never trust that.
+            // Also the path taken when the deadline task cancelled this drain.
+            try Task.checkCancellation()
             throw ProviderError.truncatedStream(provider: request.seat.provider.displayName)
         }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ProviderError.emptyAnswer
         }
         return CollectedResult(text: text, usage: usage, stopReason: stopReason)
-    }
-
-    private static func errorMessage(from error: Error) -> String {
-        if let localized = (error as? LocalizedError)?.errorDescription {
-            return localized
-        }
-        return String(describing: error)
     }
 }

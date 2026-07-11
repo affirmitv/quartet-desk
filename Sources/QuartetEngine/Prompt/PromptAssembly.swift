@@ -5,11 +5,15 @@ public struct PanelAnswer: Sendable, Equatable {
     public var seatName: String
     public var modelID: String
     public var text: String
+    /// True when the answer was cut off at the provider token limit — the
+    /// synthesizer is told explicitly so it never treats a half answer as whole.
+    public var truncated: Bool
 
-    public init(seatName: String, modelID: String, text: String) {
+    public init(seatName: String, modelID: String, text: String, truncated: Bool = false) {
         self.seatName = seatName
         self.modelID = modelID
         self.text = text
+        self.truncated = truncated
     }
 }
 
@@ -64,7 +68,17 @@ public enum PromptAssembly {
         var sections: [String] = []
         sections.append("ORIGINAL QUERY:\n\(query)")
         for answer in answers {
-            sections.append("--- ANSWER FROM \(answer.seatName) (\(answer.modelID)) ---\n\(answer.text)")
+            if answer.truncated {
+                sections.append("""
+                --- ANSWER FROM \(answer.seatName) (\(answer.modelID)) — TRUNCATED ---
+                NOTE: this answer was CUT OFF at the provider's token limit and is incomplete. \
+                Use what is here, but do not invent the missing remainder and do not treat \
+                its absence of coverage on a topic as a position.
+                \(answer.text)
+                """)
+            } else {
+                sections.append("--- ANSWER FROM \(answer.seatName) (\(answer.modelID)) ---\n\(answer.text)")
+            }
         }
         for failure in failures {
             sections.append("--- \(failure.seatName) (\(failure.modelID)) FAILED ---\nNo answer was produced (\(failure.reason)). Do not invent a position for this panelist.")

@@ -92,6 +92,11 @@ struct RecordDetailView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         if let answer = record.synthesizedAnswer, !answer.isEmpty {
+                            if record.synthesisTruncated {
+                                Label("Synthesis hit the token limit — this answer is INCOMPLETE.",
+                                      systemImage: "scissors")
+                                    .foregroundStyle(.orange)
+                            }
                             MarkdownText(markdown: answer)
                         } else {
                             Label(record.synthesisError ?? "No synthesized answer was produced.",
@@ -111,6 +116,7 @@ struct RecordDetailView: View {
                                                          isAnchor: transcript.isAnchor))
                     state.text = transcript.text
                     state.usage = transcript.usage
+                    state.truncated = transcript.truncated
                     state.status = transcript.errorMessage.map { .failed($0) } ?? .done
                     if transcript.revisionFailed {
                         state.revisionFailedMessage = "Deliberation revision failed."

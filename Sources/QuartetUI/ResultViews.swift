@@ -76,6 +76,11 @@ struct AnswerPane: View {
                         Text("Synthesizing…").foregroundStyle(.secondary)
                     }
                 case .done:
+                    if record?.synthesisTruncated == true {
+                        Label("Synthesis hit the token limit — this answer is INCOMPLETE.",
+                              systemImage: "scissors")
+                            .foregroundStyle(.orange)
+                    }
                     MarkdownText(markdown: displayText)
                 case .failed(let message):
                     Label(message, systemImage: "xmark.octagon.fill")
@@ -156,6 +161,14 @@ struct SeatCard: View {
                       systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(.orange)
+            }
+
+            if state.truncated {
+                Label("Answer hit the model's token limit — it is INCOMPLETE.",
+                      systemImage: "scissors")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .help("The provider stopped at max_tokens. Raise the per-seat token cap or shorten the query.")
             }
 
             Divider()

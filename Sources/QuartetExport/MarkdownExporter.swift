@@ -13,6 +13,10 @@ public enum MarkdownExporter {
         lines.append("> Date: \(Self.dateFormatter.string(from: record.createdAt))")
         lines.append("")
         if let answer = record.synthesizedAnswer, !answer.isEmpty {
+            if record.synthesisTruncated {
+                lines.append("> **WARNING:** synthesis hit the token limit — this answer is incomplete.")
+                lines.append("")
+            }
             lines.append(answer)
         } else {
             lines.append("**No synthesized answer was produced.** \(record.synthesisError ?? "")")
@@ -38,6 +42,10 @@ public enum MarkdownExporter {
         lines.append("## Synthesized Answer")
         lines.append("")
         if let answer = record.synthesizedAnswer, !answer.isEmpty {
+            if record.synthesisTruncated {
+                lines.append("> **WARNING:** synthesis hit the token limit — this answer is incomplete.")
+                lines.append("")
+            }
             lines.append(answer)
         } else {
             lines.append("**No synthesized answer was produced.** \(record.synthesisError ?? "")")
@@ -55,6 +63,10 @@ public enum MarkdownExporter {
             } else {
                 if seat.revisionFailed {
                     lines.append("_Deliberation revision failed — this is the round-1 answer._")
+                    lines.append("")
+                }
+                if seat.truncated {
+                    lines.append("_This answer hit the token limit — it is incomplete._")
                     lines.append("")
                 }
                 lines.append(seat.text)

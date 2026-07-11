@@ -284,6 +284,8 @@ final class AppModel {
             }
         case .seatCompleted(let seatID, let text, _):
             updateSeat(seatID) { $0.status = .done; $0.text = text }
+        case .seatTruncated(let seatID):
+            updateSeat(seatID) { $0.truncated = true }
         case .seatFailed(let seatID, let message):
             updateSeat(seatID) { $0.status = .failed(message) }
         case .seatRevisionBegan(let seatID):
@@ -333,6 +335,7 @@ final class AppModel {
             updateSeat(transcript.id) { state in
                 state.text = transcript.text
                 state.usage = transcript.usage
+                state.truncated = transcript.truncated
                 if let error = transcript.errorMessage {
                     state.status = .failed(error)
                 } else {
