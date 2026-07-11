@@ -23,6 +23,7 @@ public struct QuartetRootView: View {
         } detail: {
             detail
         }
+        .background(QDTheme.ink)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 exportMenu

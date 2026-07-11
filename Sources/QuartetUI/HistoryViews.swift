@@ -3,11 +3,10 @@ import QuartetEngine
 
 /// Sidebar list of persisted runs.
 ///
-/// Deliberately KEEPS the system sidebar material (`.listStyle(.sidebar)`
-/// inside NavigationSplitView) — one of exactly two sanctioned translucency
-/// surfaces (§1.4). Do NOT paint this with QDTheme.ink: behind-window blur is
-/// the brand look here. (Smoke PNGs render it flat — offscreen caches can't
-/// sample the backdrop; capture-only artifact, verify translucency live.)
+/// Painted flat QDTheme.ink like every other panel (Steven, 2026-07-10, from
+/// live use: the system sidebar material read as a hole in the dark scheme —
+/// "background is black but doesn't cover all the panels"). Translucency
+/// stays only on the bottom bars.
 struct HistorySidebar: View {
     @Bindable var model: AppModel
 
@@ -40,6 +39,8 @@ struct HistorySidebar: View {
             }
         }
         .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+        .background(QDTheme.ink)
         .safeAreaInset(edge: .bottom) {
             Button {
                 model.selectedRecordID = nil
