@@ -7,6 +7,9 @@ options:
 packages:
   QuartetDeskKit:
     path: .
+  Sentry:
+    url: https://github.com/getsentry/sentry-cocoa
+    from: "8.36.0"
 
 targets:
   QuartetDesk:
@@ -17,24 +20,36 @@ targets:
     dependencies:
       - package: QuartetDeskKit
         product: QuartetUI
+      - package: Sentry
+        product: Sentry
     entitlements:
       path: App/QuartetDesk.entitlements
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.network.client: true
         com.apple.security.files.user-selected.read-write: true
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        CFBundleDisplayName: Quartet Desk
+        NSHumanReadableCopyright: "© 2026 Affirmi Inc."
+        LSApplicationCategoryType: public.app-category.productivity
+        NSPrincipalClass: NSApplication
+        # Committed value is the EMPTY STRING by design: crash reporting can
+        # only ever activate in release builds where CI injects a real DSN
+        # (and even then only after the user opts in via Settings → Privacy).
+        SENTRY_DSN: ""
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: tv.affirmi.quartetdesk
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_NSHumanReadableCopyright: ""
-        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
-        ENABLE_HARDENED_RUNTIME: NO
+        ENABLE_HARDENED_RUNTIME: YES
 
   # Live UI smoke test (spends real tokens): drives one full quartet run through
   # the real UI and attaches screenshots. Run:

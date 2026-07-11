@@ -19,8 +19,40 @@ public struct QuartetSettingsView: View {
                 .tabItem { Label("Seats", systemImage: "person.3.fill") }
             PricesSettings(model: model)
                 .tabItem { Label("Prices", systemImage: "dollarsign.circle") }
+            PrivacySettings()
+                .tabItem { Label("Privacy", systemImage: "hand.raised.fill") }
         }
         .frame(width: 640, height: 460)
+    }
+}
+
+// MARK: - Privacy
+
+private struct PrivacySettings: View {
+    @AppStorage(CrashReporting.optInDefaultsKey) private var shareCrashReports = false
+
+    var body: some View {
+        Form {
+            Section("Crash & error reports") {
+                Toggle("Share crash & error reports", isOn: $shareCrashReports)
+                Text("""
+                Off by default. When on, anonymized crash reports (stack traces, \
+                app/OS version) help fix bugs. Reports NEVER include your prompts, \
+                model answers, or API keys — content-bearing fields are stripped \
+                before anything is sent. Takes effect at the next launch.
+                """)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if !CrashReporting.buildHasReportingEndpoint() {
+                    Label("This build has no reporting endpoint configured — nothing will ever be sent, regardless of this setting.",
+                          systemImage: "checkmark.shield")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
     }
 }
 
