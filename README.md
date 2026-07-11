@@ -135,6 +135,52 @@ OpenRouter (the defaults need those two), hit **Test** on each, then run a query
      `KeyTester`.
   4. The Settings key UI picks up the new `ProviderKind` case automatically.
 
+## Getting started: keys
+
+First launch opens a Setup Assistant. You need at minimum an
+[OpenRouter](https://openrouter.ai/keys) key (covers seats routed through
+OpenRouter — which can be all four, including Claude via
+`anthropic/claude-opus-4.8`). Direct [Anthropic](https://console.anthropic.com/)
+and [OpenAI](https://platform.openai.com/api-keys) keys are optional and only
+needed if you point a seat at those providers directly.
+
+Keys are stored **only in your Mac's Keychain** (app-owned items, so macOS
+won't nag you with permission dialogs) and are only ever sent to the provider
+you configured for that seat. Nothing else ever sees them. The Setup Assistant
+is re-runnable from Help → Setup Assistant.
+
+## What it costs (the FAQ everyone asks)
+
+- A full run on four **frontier** seats costs roughly **$0.30–0.50**. Our first
+  real run asked for a marketing plan and got four budgets back: $650, $1.5k,
+  $4.2k, $12k. A single model hands you one of those numbers with full
+  confidence — the spread *was* the answer. That's what the money buys.
+- Panels can be **cheaper** than one big model: a jury of small, diverse models
+  beat a single GPT-4 judge at ~1/7th the cost
+  ([Verga et al. 2024](https://arxiv.org/abs/2404.18796)). Seats are fully
+  configurable — a DeepSeek/Qwen/Llama budget quartet runs for **about a penny**.
+- You don't quartet everything. You quartet decisions.
+- The argument ages badly: frontier per-token prices dropped ~6× in a single
+  model generation (gpt-5.5-pro → gpt-5.6-sol-pro).
+
+## Security & privacy
+
+- **Keys**: macOS Keychain only, sent only to the provider you chose. No
+  proxy, no middleman, no telemetry of key material — the engine's secret
+  redactor additionally scrubs anything key-shaped from user-facing errors.
+- **Crash reports are double-gated**: the Sentry SDK initializes only if you
+  opt in (Settings toggle, **default off**) *and* a DSN is present — and the
+  DSN committed to this repo is an **empty string**, so source builds have
+  telemetry compiled out no matter what the toggle says. Official release
+  builds get a DSN injected at build time. Prompts, answers, and keys are
+  never attached to any event (`beforeSend` scrubber, no content breadcrumbs).
+- **Run history** stays local: JSON under
+  `~/Library/Application Support/QuartetDesk/`.
+
+Why a quartet at all? The long version, with the research and the production
+PR gate this design comes from:
+[Why the Quartet](https://appspace.affirmi.tv/blog#08-why-the-quartet).
+
 ## Known gaps (v1)
 
 - Markdown rendering is modest (paragraph + fenced-code blocks, inline styles);

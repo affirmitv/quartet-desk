@@ -1,0 +1,98 @@
+name: release
+
+# Tag v* → build, (optionally) sign + notarize, package a DMG, attach to the
+# GitHub release. Honest by design: steps that need secrets which aren't
+# configured SKIP with a loud log line — nothing is ever fake-signed.
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build-dmg:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Test
+        run: swift test
+
+      - name: Build Release
+        env:
+          # Injected ONLY here: the repo's committed SENTRY_DSN is an empty
+          # string, so source builds have telemetry compiled out. Official
+          # binaries get the real DSN from the repo secret (if configured).
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: |
+          xcodegen generate
+          if [ -n "$SENTRY_DSN" ]; then
+            echo "SENTRY_DSN secret present — injecting into Info.plist after build"
+          else
+            echo "::notice::SENTRY_DSN secret not configured — building with telemetry compiled out"
+          fi
+          xcodebuild -project QuartetDesk.xcodeproj -scheme QuartetDesk \
+            -configuration Release -derivedDataPath build build
+          APP=build/Build/Products/Release/QuartetDesk.app
+          if [ -n "$SENTRY_DSN" ]; then
+            /usr/libexec/PlistBuddy -c "Set :SENTRY_DSN $SENTRY_DSN" "$APP/Contents/Info.plist"
+          fi
+
+      - name: Sign (Developer ID, if configured)
+        env:
+          DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          APP=build/Build/Products/Release/QuartetDesk.app
+          if [ -z "$DEVELOPER_ID_P12_BASE64" ]; then
+            echo "::warning::No Developer ID certificate secret — ad-hoc signing (users need right-click → Open)"
+            codesign --force --deep -s - "$APP"
+            exit 0
+          fi
+          echo "$DEVELOPER_ID_P12_BASE64" | base64 -d > /tmp/devid.p12
+          security create-keychain -p ci ci.keychain
+          security import /tmp/devid.p12 -k ci.keychain -P "$DEVELOPER_ID_P12_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -s ci.keychain
+          security unlock-keychain -p ci ci.keychain
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci ci.keychain
+          IDENTITY=$(security find-identity -v -p codesigning ci.keychain | awk -F'"' '/Developer ID Application/{print $2; exit}')
+          if [ -z "$IDENTITY" ]; then echo "::error::P12 imported but no Developer ID Application identity found"; exit 1; fi
+          codesign --force --deep --options runtime -s "$IDENTITY" "$APP"
+          codesign --verify --strict "$APP"
+
+      - name: Notarize (if configured)
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_APP_PASSWORD: ${{ secrets.NOTARY_APP_PASSWORD }}
+        run: |
+          if [ -z "$NOTARY_APPLE_ID" ]; then
+            echo "::warning::Notarization secrets not configured — skipping (Gatekeeper will warn)"
+            exit 0
+          fi
+          APP=build/Build/Products/Release/QuartetDesk.app
+          ditto -c -k --keepParent "$APP" /tmp/QuartetDesk.zip
+          xcrun notarytool submit /tmp/QuartetDesk.zip \
+            --apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" \
+            --password "$NOTARY_APP_PASSWORD" --wait
+          xcrun stapler staple "$APP"
+
+      - name: Package DMG
+        run: |
+          APP=build/Build/Products/Release/QuartetDesk.app
+          STAGE=$(mktemp -d)
+          cp -R "$APP" "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          VERSION="${GITHUB_REF_NAME#v}"
+          hdiutil create -volname "Quartet Desk" -srcfolder "$STAGE" -ov -format UDZO "QuartetDesk-$VERSION.dmg"
+          shasum -a 256 "QuartetDesk-$VERSION.dmg" | tee "QuartetDesk-$VERSION.dmg.sha256"
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" --generate-notes || true
+          gh release upload "$GITHUB_REF_NAME" "QuartetDesk-$VERSION.dmg" "QuartetDesk-$VERSION.dmg.sha256" --clobber
