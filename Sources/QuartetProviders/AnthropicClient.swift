@@ -24,12 +24,10 @@ public struct AnthropicClient: ProviderStreaming {
         var stream: Bool
         var system: String?
         var messages: [Message]
-        /// Adaptive thinking is the recommended mode for current Claude models
-        /// (with thinking off, Opus 4.8 may write verbose reasoning into the
-        /// visible answer). Thinking tokens bill as output tokens, so the
-        /// existing usage/cost accounting is unchanged; the decoder already
-        /// ignores thinking_delta frames.
-        var thinking: Thinking? = Thinking(type: "adaptive")
+        /// Set per-model by `makeURLRequest` (see `supportsAdaptiveThinking`).
+        /// nil ⇒ the field is omitted from the wire body entirely — the one
+        /// shape that is valid on EVERY Claude model.
+        var thinking: Thinking?
 
         struct Thinking: Encodable {
             var type: String
@@ -61,6 +59,28 @@ public struct AnthropicClient: ProviderStreaming {
         }
     }
 
+    /// Capability gate for `thinking: {"type": "adaptive"}`.
+    ///
+    /// Per the Anthropic Messages API docs (2026): adaptive thinking is the
+    /// recommended mode on Opus 4.6+ / Sonnet 4.6 / Fable 5 — and the ONLY
+    /// on-mode on Opus 4.7+ and Fable 5 (`budget_tokens` 400s there). Older
+    /// models (Sonnet 4.5, Haiku 4.5, Opus 4.5/4.1, Claude 3.x) REJECT
+    /// `type: "adaptive"` with a 400. Seats are user-configurable, so the
+    /// param is sent only for known-supporting models; for anything else —
+    /// including unknown future IDs — `thinking` is OMITTED, which is valid on
+    /// every model (thinking simply stays off). No request can 400 on this
+    /// field. Verified live 2026-07-10 (`swift run LiveSmoke`, claude-opus-4-8).
+    static func supportsAdaptiveThinking(modelID: String) -> Bool {
+        let adaptivePrefixes = [
+            "claude-opus-4-6",
+            "claude-opus-4-7",
+            "claude-opus-4-8",
+            "claude-sonnet-4-6",
+            "claude-fable-5",
+        ]
+        return adaptivePrefixes.contains { modelID.hasPrefix($0) }
+    }
+
     static func makeURLRequest(request: SeatRequest, apiKey: String) throws -> URLRequest {
         // Anthropic takes system prompts as a top-level field, not a message role.
         let systemText = request.messages
@@ -79,11 +99,18 @@ public struct AnthropicClient: ProviderStreaming {
                 return RequestBody.Message(role: message.role.rawValue, content: content)
             }
 
+        // Adaptive thinking where the model supports it (thinking tokens bill
+        // as output tokens, so usage/cost accounting is unchanged; the decoder
+        // already ignores thinking_delta frames). Omitted otherwise — never an
+        // unconditional param a user-configured older model would 400 on.
         let body = RequestBody(model: request.seat.modelID,
                                max_tokens: request.maxTokens,
                                stream: true,
                                system: systemText.isEmpty ? nil : systemText,
-                               messages: wireMessages)
+                               messages: wireMessages,
+                               thinking: supportsAdaptiveThinking(modelID: request.seat.modelID)
+                                   ? RequestBody.Thinking(type: "adaptive")
+                                   : nil)
 
         var urlRequest = URLRequest(url: endpoint)
         urlRequest.httpMethod = "POST"

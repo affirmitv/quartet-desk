@@ -20,6 +20,12 @@ final class ProviderKeyEntryModel: Identifiable {
     var key: String = ""
     private(set) var testing = false
     private(set) var status: Status = .none
+    /// Whether a key is PRESENT in the Keychain — tracked separately from
+    /// `status` because a failed TEST of a new candidate does not remove or
+    /// overwrite a previously stored key. `hasKey` derives from this, so
+    /// onboarding can't falsely report a required key as missing after a
+    /// failed test attempt.
+    private(set) var storedKeyPresent = false
 
     enum Status: Equatable {
         /// No key in the Keychain and nothing verified.
@@ -37,13 +43,10 @@ final class ProviderKeyEntryModel: Identifiable {
         loadExisting()
     }
 
-    /// True when this provider has a usable stored key (saved or verified).
-    var hasKey: Bool {
-        switch status {
-        case .saved, .verified: return true
-        case .none, .failed: return false
-        }
-    }
+    /// True when this provider has a stored key in the Keychain — regardless
+    /// of whether the LAST test attempt failed (the stored key survives a
+    /// failed test of a new candidate).
+    var hasKey: Bool { storedKeyPresent }
 
     var trimmedKey: String {
         key.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -55,6 +58,7 @@ final class ProviderKeyEntryModel: Identifiable {
             if let existing = try KeychainStore().key(for: provider), !existing.isEmpty {
                 key = existing
                 status = .saved
+                storedKeyPresent = true
             }
         } catch {
             Self.logger.error("Keychain read failed for \(self.provider.rawValue, privacy: .public): \(String(describing: error), privacy: .public)")
@@ -68,6 +72,7 @@ final class ProviderKeyEntryModel: Identifiable {
         do {
             try KeychainStore().setKey(trimmedKey, for: provider)
             status = .saved
+            storedKeyPresent = true
         } catch {
             Self.logger.error("Keychain save failed for \(self.provider.rawValue, privacy: .public): \(String(describing: error), privacy: .public)")
             status = .failed("Keychain save failed: \(error.localizedDescription)")
@@ -85,8 +90,12 @@ final class ProviderKeyEntryModel: Identifiable {
             let summary = try await KeyTester().test(provider: provider, apiKey: candidate)
             try KeychainStore().setKey(candidate, for: provider)
             status = .verified(summary)
+            storedKeyPresent = true
         } catch {
-            Self.logger.error("Key test/save failed for \(self.provider.rawValue, privacy: .public): \(String(describing: error), privacy: .public)")
+            // NOTE: a failed test does NOT clear storedKeyPresent — the failed
+            // candidate was never written, so any previously stored key is
+            // still in the Keychain and still usable.
+            Self.logger.error("Key test/save failed for \(self.provider.rawValue, privacy: .public): \(redactedDescription(for: error), privacy: .public)")
             status = .failed(userFacingMessage(for: error))
         }
     }

@@ -22,11 +22,23 @@ struct OnboardingView: View {
     /// Key rows in onboarding order (required providers first). Shares the
     /// exact save/test wiring with Settings via ProviderKeyEntryRow — and
     /// step 4's status list is computed from these live states, never hardcoded.
-    @State private var keyRows: [ProviderKeyEntryModel] = [
-        ProviderKeyEntryModel(provider: .anthropic),
-        ProviderKeyEntryModel(provider: .openrouter),
-        ProviderKeyEntryModel(provider: .openai),
-    ]
+    ///
+    /// Created LAZILY when the keys step first appears: ProviderKeyEntryModel's
+    /// init reads the Keychain (loadExisting), and touching the Keychain before
+    /// the user has seen the permission explainer would risk presenting the
+    /// very dialog the explainer promises comes later.
+    @State private var keyRows: [ProviderKeyEntryModel] = []
+
+    /// Idempotent lazy init for `keyRows` — first Keychain touch happens here,
+    /// strictly after the permission-explainer step.
+    private func ensureKeyRowsLoaded() {
+        guard keyRows.isEmpty else { return }
+        keyRows = [
+            ProviderKeyEntryModel(provider: .anthropic),
+            ProviderKeyEntryModel(provider: .openrouter),
+            ProviderKeyEntryModel(provider: .openai),
+        ]
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -93,9 +105,12 @@ struct OnboardingView: View {
                     Button("← Back") { step = .welcome }
                         .buttonStyle(QDGhostButtonStyle())
                         .accessibilityLabel("Back")
-                    Button("Got It — Add Keys →") { step = .keys }
-                        .buttonStyle(QDPrimaryButtonStyle())
-                        .accessibilityLabel("Got it, add keys")
+                    Button("Got It — Add Keys →") {
+                        ensureKeyRowsLoaded()
+                        step = .keys
+                    }
+                    .buttonStyle(QDPrimaryButtonStyle())
+                    .accessibilityLabel("Got it, add keys")
                 case .keys:
                     Button("← Back") { step = .permission }
                         .buttonStyle(QDGhostButtonStyle())
@@ -127,7 +142,14 @@ struct OnboardingView: View {
         // bumping the token while the sheet is still up would lose focus back
         // to the dismissing sheet.
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(350))
+            do {
+                try await Task.sleep(for: .milliseconds(350))
+            } catch {
+                // Cancelled (window tearing down) — deliberately do NOT bump
+                // the focus token; there is nothing left to focus. Explicit,
+                // never `try?` (zero-silent-failure rule).
+                return
+            }
             model.composerFocusToken += 1
         }
     }
@@ -188,7 +210,7 @@ struct OnboardingView: View {
                 Text("BEFORE WE START").qdKicker()
                 Text("ONE DIALOG, ZERO SURPRISES.").qdDisplayTitle()
 
-                Text("When you save or test a key on the next screen, macOS may show a system dialog that looks like this:")
+                Text("When you save or test a key on the next screen, macOS MAY show a system dialog like this — most often when a rebuilt or differently-signed copy of the app reads a key an earlier copy saved. Keys saved by this exact build usually produce no dialog at all:")
                     .font(.system(size: 13))
                     .foregroundStyle(QDTheme.text60)
                     .fixedSize(horizontal: false, vertical: true)
@@ -198,9 +220,9 @@ struct OnboardingView: View {
                     .padding(.vertical, 4)
 
                 Group {
-                    Text("Why: your keys live in the macOS Keychain — the same encrypted store Safari uses for passwords. macOS guards it per-app and asks the first time an app (or a newly rebuilt copy of it) touches its own entry.")
-                    Text("What to do: click “Always Allow”. You'll usually see it once — or again if you rebuild the app from source, because the code signature changes.")
-                    Text("We warn you now because a surprise permission dialog mid-paste is bad UX. When this dialog appears, nothing is being sent anywhere — it's strictly between you and macOS.")
+                    Text("Why: your keys live in the macOS Keychain — the same encrypted store Safari uses for passwords. macOS guards it per-app and may ask before an app copy it doesn't recognize reads an entry.")
+                    Text("Your choice: “Allow” grants a single read (macOS may ask again later); “Always Allow” stops the dialog from reappearing for this exact app copy. Both are safe — the key never leaves your Mac either way. If you rebuild from source, the code signature changes and macOS treats it as a new app copy.")
+                    Text("We mention it now because a surprise permission dialog mid-paste is bad UX. When this dialog appears, nothing is being sent anywhere — it's strictly between you and macOS.")
                 }
                 .font(.system(size: 13))
                 .foregroundStyle(QDTheme.text60)
@@ -225,9 +247,12 @@ struct OnboardingView: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
+                // All three rendered NEUTRALLY — the explainer text describes
+                // the Allow / Always Allow tradeoff; we don't coach users into
+                // granting persistent Keychain access.
                 fakeGhostButton("Deny")
                 fakeGhostButton("Allow")
-                fakePrimaryButton("Always Allow") // glow ring = "click this one"
+                fakeGhostButton("Always Allow")
             }
         }
         .padding(18)
@@ -237,7 +262,7 @@ struct OnboardingView: View {
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(QDTheme.line, lineWidth: 1))
         .allowsHitTesting(false)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Example of the macOS keychain permission dialog. When it appears, click Always Allow.")
+        .accessibilityLabel("Example of the macOS keychain permission dialog. Allow grants one read; Always Allow stops it reappearing for this app copy.")
     }
 
     private func fakeGhostButton(_ title: String) -> some View {

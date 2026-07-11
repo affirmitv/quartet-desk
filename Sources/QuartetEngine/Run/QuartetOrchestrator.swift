@@ -82,7 +82,7 @@ public struct QuartetOrchestrator: Sendable {
                 continuation.yield(.finished(record))
                 continuation.finish()
             } catch {
-                Self.logger.error("Quartet run failed: \(String(describing: error), privacy: .public)")
+                Self.logger.error("Quartet run failed: \(redactedDescription(for: error), privacy: .public)")
                 continuation.finish(throwing: error)
             }
         }
@@ -208,7 +208,7 @@ public struct QuartetOrchestrator: Sendable {
                 dissent = parsed.outcome
             } catch {
                 synthesisError = userFacingMessage(for: error)
-                logger.error("Synthesis failed: \(String(describing: error), privacy: .public)")
+                logger.error("Synthesis failed: \(redactedDescription(for: error), privacy: .public)")
                 continuation.yield(.synthesisFailed(message: synthesisError!))
             }
         }
@@ -281,7 +281,7 @@ public struct QuartetOrchestrator: Sendable {
                                errorMessage: nil, revisionFailed: false, truncated: truncated)
         } catch {
             let message = userFacingMessage(for: error)
-            logger.error("Seat \(seat.name, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+            logger.error("Seat \(seat.name, privacy: .public) failed: \(redactedDescription(for: error), privacy: .public)")
             continuation.yield(.seatFailed(seatID: seat.id, message: message))
             return SeatOutcome(seat: seat, text: "", legs: [],
                                errorMessage: message, revisionFailed: false, truncated: false)
@@ -328,7 +328,7 @@ public struct QuartetOrchestrator: Sendable {
             // Fail-soft for revisions only: the seat KEEPS its round-1 answer,
             // and the failure is surfaced (event + transcript flag) — never hidden.
             let message = userFacingMessage(for: error)
-            logger.error("Deliberation for seat \(seat.name, privacy: .public) failed; keeping round-1 answer: \(String(describing: error), privacy: .public)")
+            logger.error("Deliberation for seat \(seat.name, privacy: .public) failed; keeping round-1 answer: \(redactedDescription(for: error), privacy: .public)")
             continuation.yield(.seatRevisionFailed(seatID: seat.id, message: message))
             var kept = outcome
             kept.revisionFailed = true
@@ -352,14 +352,24 @@ public struct QuartetOrchestrator: Sendable {
                                       timeout: TimeInterval,
                                       onDelta: @escaping @Sendable (String) -> Void,
                                       onUsage: @escaping @Sendable (TokenUsage) -> Void = { _ in }) async throws -> CollectedResult {
-        try await withThrowingTaskGroup(of: CollectedResult.self) { group in
+        // `perCallWallClockSeconds` is a public config knob — validate it before
+        // the nanosecond conversion. A NaN, negative, or overflowing Double →
+        // UInt64 conversion TRAPS; a bad config must instead surface as a
+        // controlled per-seat failure.
+        guard timeout.isFinite, timeout > 0 else {
+            throw ProviderError.api(message: "Invalid per-call timeout (\(timeout)s) — perCallWallClockSeconds must be a positive, finite number of seconds.")
+        }
+        // Ceiling keeps timeout * 1e9 far away from UInt64.max. 7 days is
+        // already absurd for a single provider call; documented, not silent.
+        let cappedTimeout = min(timeout, 7 * 86_400)
+        return try await withThrowingTaskGroup(of: CollectedResult.self) { group in
             group.addTask {
                 try await drainStream(request: request, resolver: resolver,
                                       onDelta: onDelta, onUsage: onUsage)
             }
             group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                throw ProviderError.timedOut(afterSeconds: timeout)
+                try await Task.sleep(nanoseconds: UInt64(cappedTimeout * 1_000_000_000))
+                throw ProviderError.timedOut(afterSeconds: cappedTimeout)
             }
             // First child to finish wins: either the drained result, or the
             // deadline throwing timedOut. Cancel the loser.
@@ -382,6 +392,11 @@ public struct QuartetOrchestrator: Sendable {
         var stopReason: String?
         var completed = false
         for try await chunk in client.stream(request: request, apiKey: apiKey) {
+            // Explicit cancellation check per chunk: when the deadline child
+            // wins the race and cancelAll() fires, no further deltas may reach
+            // the continuation — a wedged provider drip-feeding bytes must not
+            // keep painting a seat that has already been declared timed out.
+            try Task.checkCancellation()
             switch chunk {
             case .textDelta(let delta):
                 text += delta

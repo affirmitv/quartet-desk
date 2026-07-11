@@ -125,8 +125,8 @@ struct ComposerView: View {
         Task { @MainActor in
             for provider in fileProviders {
                 do {
-                    let url = try await Self.loadFileURL(from: provider)
-                    await model.addAttachment(contentsOf: url)
+                    let (name, data) = try await Self.loadFileData(from: provider)
+                    await model.addAttachment(imageData: data, sourceName: name)
                 } catch {
                     model.appendAttachmentError("Drop failed: \(error.localizedDescription)")
                 }
@@ -146,28 +146,49 @@ struct ComposerView: View {
     private enum DropLoadError: LocalizedError {
         case notAFileURL
         case noData
+        case unreadable(name: String, underlying: String)
 
         var errorDescription: String? {
             switch self {
             case .notAFileURL: return "The dropped item is not a file URL."
             case .noData: return "The dropped item carried no image data."
+            case .unreadable(let name, let underlying):
+                return "Could not read “\(name)”: \(underlying)"
             }
         }
     }
 
-    private static func loadFileURL(from provider: NSItemProvider) async throws -> URL {
+    /// Resolves a dropped file-URL provider to its BYTES, read entirely inside
+    /// the `loadItem` completion. In a sandboxed app the drag's implicit
+    /// sandbox extension on the URL is only guaranteed valid while the
+    /// completion runs — stashing the URL and reading it later (the previous
+    /// implementation) fails with a permission error once the extension is
+    /// torn down. The security-scope bracket covers the flavors that ship a
+    /// scoped URL; it returns false (harmlessly) for plain drag URLs.
+    private static func loadFileData(from provider: NSItemProvider) async throws -> (name: String, data: Data) {
         try await withCheckedThrowingContinuation { continuation in
             provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, error in
                 if let error {
                     continuation.resume(throwing: error)
                     return
                 }
-                guard let data = item as? Data,
-                      let url = URL(dataRepresentation: data, relativeTo: nil) else {
+                guard let urlData = item as? Data,
+                      let url = URL(dataRepresentation: urlData, relativeTo: nil) else {
                     continuation.resume(throwing: DropLoadError.notAFileURL)
                     return
                 }
-                continuation.resume(returning: url)
+                let accessing = url.startAccessingSecurityScopedResource()
+                defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+                do {
+                    // Read NOW, on this background completion queue, while
+                    // access is still valid — never after the closure returns.
+                    let data = try Data(contentsOf: url)
+                    continuation.resume(returning: (url.lastPathComponent, data))
+                } catch {
+                    continuation.resume(throwing: DropLoadError.unreadable(
+                        name: url.lastPathComponent,
+                        underlying: error.localizedDescription))
+                }
             }
         }
     }

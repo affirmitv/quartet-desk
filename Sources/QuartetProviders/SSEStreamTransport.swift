@@ -31,8 +31,8 @@ struct SSEStreamTransport: Sendable {
                                          continuation: continuation)
                     continuation.finish()
                     return
-                } catch {
-                    let kind = Self.classify(error)
+                } catch let attemptError {
+                    let kind = Self.classify(attemptError)
                     let decision = retryPolicy.decision(for: kind,
                                                         attempt: attempt,
                                                         hasYieldedChunks: yieldedAnyChunk)
@@ -43,14 +43,17 @@ struct SSEStreamTransport: Sendable {
                         do {
                             try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                         } catch {
-                            // Cancelled during backoff — surface the ORIGINAL failure.
-                            continuation.finish(throwing: Self.normalize(error, providerName: providerName))
+                            // Cancelled during backoff — surface the ORIGINAL
+                            // attempt failure, not the sleep's CancellationError
+                            // (which the unlabeled inner `catch` used to shadow
+                            // it with).
+                            continuation.finish(throwing: Self.normalize(attemptError, providerName: providerName))
                             return
                         }
                         attempt += 1
                     case .fail:
-                        logger.error("\(self.providerName, privacy: .public) stream failed (attempt \(attempt)): \(String(describing: error), privacy: .public)")
-                        continuation.finish(throwing: Self.normalize(error, providerName: providerName))
+                        logger.error("\(self.providerName, privacy: .public) stream failed (attempt \(attempt)): \(String(describing: attemptError), privacy: .public)")
+                        continuation.finish(throwing: Self.normalize(attemptError, providerName: providerName))
                         return
                     }
                 }
@@ -73,6 +76,10 @@ struct SSEStreamTransport: Sendable {
         var decoder = makeDecoder()
 
         for try await byte in bytes {
+            // Cooperative cancellation per byte (a cheap flag read): when the
+            // consumer tears down (onTermination → task.cancel()), a provider
+            // drip-feeding bytes must not keep this attempt alive.
+            try Task.checkCancellation()
             guard let line = splitter.feed(byte) else { continue }
             guard let event = parser.feed(line: line) else { continue }
             for chunk in try decoder.decode(event) {

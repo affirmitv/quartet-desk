@@ -52,7 +52,13 @@ public struct KeychainStore: Sendable {
     /// errSecItemNotFound and race SecItemAdd. The loser gets
     /// errSecDuplicateItem — which means a valid item now exists, so we retry
     /// the update once instead of surfacing a bogus "save failed".
-    /// Semantics across concurrent setKey calls are last-writer-wins.
+    ///
+    /// Concurrency semantics: whichever underlying SecItem write LANDS last
+    /// wins. No ordering between concurrent `setKey` invocations is
+    /// established or guaranteed — a caller's earlier call can overwrite a
+    /// later one if its retry lands last. Every concurrent outcome leaves ONE
+    /// intact item holding one of the written values; that (not
+    /// invocation-order last-writer-wins) is the invariant callers may rely on.
     public func setKey(_ key: String, for provider: ProviderKind) throws {
         let data = Data(key.utf8)
         let query = baseQuery(for: provider)

@@ -10,9 +10,13 @@ import QuartetEngine
 /// - The committed Info.plist SENTRY_DSN value is the EMPTY STRING; release CI
 ///   injects a real DSN. Empty/missing DSN ⇒ the SDK never starts, period —
 ///   so a from-source build can never phone home even if the toggle is on.
-/// - Nothing resembling prompts, answers, or key material may leave the
-///   machine: `scrub` masks credential shapes, and the bootstrap strips
-///   content-bearing event fields wholesale.
+/// - Content is dropped at the SOURCE, not filtered: the bootstrap's scrub
+///   removes every free-form event field wholesale (message, breadcrumbs,
+///   extra, context, tags, user, request, server name, fingerprint). The only
+///   surviving free-form strings are exception values (the crash reason),
+///   which are additionally redacted via `scrub` and length-capped. `scrub`
+///   itself is best-effort pattern masking — a defense-in-depth layer, never
+///   the guarantee; the guarantee comes from dropping the fields.
 public enum CrashReporting {
     /// UserDefaults key for the Settings → Privacy toggle. Default false (OFF).
     public static let optInDefaultsKey = "qd.crashreports.enabled"

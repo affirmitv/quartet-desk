@@ -205,15 +205,39 @@ final class AppModel {
     /// Reads + processes a file entirely off the main thread, then appends on
     /// return. Callers iterate their URL lists inside ONE task, so appends are
     /// deterministic in the user's selection order.
+    ///
+    /// Sandbox note: the app runs with App Sandbox enabled, so the read is
+    /// bracketed with start/stopAccessingSecurityScopedResource. NSOpenPanel
+    /// URLs are readable for the app's lifetime without it (powerbox grant;
+    /// startAccessing returns false and that's fine), but any security-scoped
+    /// URL (bookmarks, some drag flavors) NEEDS the bracket or
+    /// `Data(contentsOf:)` fails with a permission error.
     func addAttachment(contentsOf url: URL) async {
         do {
             let attachment = try await Task.detached(priority: .userInitiated) {
+                let accessing = url.startAccessingSecurityScopedResource()
+                defer { if accessing { url.stopAccessingSecurityScopedResource() } }
                 let data = try Data(contentsOf: url) // file IO off the main thread
                 return try ImagePipeline.process(data)
             }.value
             attachments.append(attachment)
         } catch {
             appendAttachmentError("Could not attach \(url.lastPathComponent): \(error.localizedDescription)")
+        }
+    }
+
+    /// Variant for callers that already hold the file BYTES (e.g. the composer
+    /// drop handler, which must read inside the NSItemProvider completion while
+    /// the drag's sandbox extension is still valid). Keeps the filename in the
+    /// error surface.
+    func addAttachment(imageData: Data, sourceName: String) async {
+        do {
+            let attachment = try await Task.detached(priority: .userInitiated) {
+                try ImagePipeline.process(imageData)
+            }.value
+            attachments.append(attachment)
+        } catch {
+            appendAttachmentError("Could not attach \(sourceName): \(error.localizedDescription)")
         }
     }
 
@@ -254,7 +278,7 @@ final class AppModel {
                 // Belt and braces only — see above; this branch cannot fire today.
                 self?.markRunStopped(message: "Run cancelled.")
             } catch {
-                Self.logger.error("Run stream failed: \(String(describing: error), privacy: .public)")
+                Self.logger.error("Run stream failed: \(redactedDescription(for: error), privacy: .public)")
                 self?.markRunStopped(message: userFacingMessage(for: error))
             }
             self?.isRunning = false
@@ -332,7 +356,16 @@ final class AppModel {
         case .seatRevisionDelta(let seatID, let text):
             updateSeat(seatID) { $0.text += text }
         case .seatRevised(let seatID, let text, _):
-            updateSeat(seatID) { $0.status = .done; $0.text = text }
+            updateSeat(seatID) { state in
+                state.status = .done
+                state.text = text
+                // The revision REPLACED the text, so the round-1 truncation
+                // flag no longer describes what's on screen. The orchestrator
+                // emits .seatTruncated AFTER .seatRevised when the revision
+                // itself was cut off — clearing here makes the flag track the
+                // revision's own stop reason instead of sticking from round 1.
+                state.truncated = false
+            }
         case .seatRevisionFailed(let seatID, let message):
             updateSeat(seatID) { state in
                 state.status = .done
