@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "QuartetDeskKit",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v14), .iOS(.v17)],
     products: [
         .library(name: "QuartetEngine", targets: ["QuartetEngine"]),
         .library(name: "QuartetProviders", targets: ["QuartetProviders"]),
